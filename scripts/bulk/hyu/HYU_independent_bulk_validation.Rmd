@@ -1,0 +1,452 @@
+---
+title: "Independent bulk RNA-seq cohort validation of SLC7A5-linked genes"
+author: "Jaehyun Choi"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r repository-setup, include=FALSE}
+.slc_start <- Sys.getenv("SLC7A5_REPO_ROOT", unset = getwd())
+.slc_repo <- normalizePath(.slc_start, mustWork = TRUE)
+while (!file.exists(file.path(.slc_repo, "R", "paths.R"))) {
+  .slc_parent <- dirname(.slc_repo)
+  if (identical(.slc_parent, .slc_repo)) stop("Start inside the repository or set SLC7A5_REPO_ROOT.")
+  .slc_repo <- .slc_parent
+}
+source(file.path(.slc_repo, "R", "paths.R"))
+slc_setup("hyu_validation")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+# 1. Purpose
+
+This analysis identifies the value for:
+
+> Validation in an independent bulk RNA-seq cohort with fibrosis annotation (n = 159) confirmed that **XX** of these genes, including **SLC7A5**, were consistently elevated in MASLD and positively correlated with fibrosis severity.
+
+Operational definition used here:
+
+1. Candidate genes are genes reduced by siSLC7A5 knockdown under LPS in the prior bulk RNA-seq analysis.
+2. A candidate gene is considered validated when it is:
+   - elevated in MASLD vs control in the independent HYU bulk cohort, and
+   - positively correlated with fibrosis severity.
+
+# 2. Libraries and Parameters
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(limma)
+library(pheatmap)
+library(RColorBrewer)
+library(ggrepel)
+
+filter <- dplyr::filter
+select <- dplyr::select
+arrange <- dplyr::arrange
+```
+
+```{r parameters}
+project_dir <- slc_output_dir("03_bulkRNAseq")
+data_dir <- file.path(slc_data_root, "03_bulkRNAseq", "01_Data")
+script_dir <- file.path(project_dir, "04_Script")
+out_dir <- file.path(project_dir, "02_analysis", "HYU_independent_validation")
+fig_dir <- file.path(project_dir, "03_Figure", "HYU_independent_validation")
+
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+
+expected_n <- 159
+
+candidate_kd_file <- slc_input("hyu_candidate_kd")
+candidate_lps_file <- slc_input("hyu_candidate_lps")
+
+padj_cutoff_candidate <- 0.05
+lfc_cutoff_candidate <- 0
+
+q_cutoff_validation <- 0.05
+min_abs_log2fc_validation <- 0
+```
+
+# 3. Candidate Gene Set from Previous Bulk RNA-seq
+
+```{r candidate_genes}
+res_lps <- read.csv(candidate_lps_file, check.names = FALSE)
+res_kd <- read.csv(candidate_kd_file, check.names = FALSE)
+
+candidate_genes <- res_kd %>%
+  transmute(
+    gene,
+    kd_log2FC = log2FoldChange,
+    kd_padj = padj
+  ) %>%
+  filter(
+    !is.na(kd_padj),
+    kd_padj < padj_cutoff_candidate,
+    kd_log2FC < -lfc_cutoff_candidate
+  ) %>%
+  left_join(
+    res_lps %>%
+      transmute(
+        gene,
+        lps_log2FC = log2FoldChange,
+        lps_padj = padj
+      ),
+    by = "gene"
+  ) %>%
+  select(gene, lps_log2FC, lps_padj, kd_log2FC, kd_padj) %>%
+  arrange(kd_padj)
+
+cat("Candidate genes reduced by siSLC7A5 knockdown under LPS:", nrow(candidate_genes), "\n")
+cat("SLC7A5 in candidate set:", "SLC7A5" %in% candidate_genes$gene, "\n")
+
+write.csv(
+  candidate_genes,
+  file.path(out_dir, "candidate_genes_siSLC7A5KD_down.csv"),
+  row.names = FALSE
+)
+
+head(candidate_genes, 20)
+```
+
+# 4. HYU Cohort Data Import
+
+```{r import_hyu}
+metadata <- read.csv(
+  slc_input("hyu_metadata"),
+  fileEncoding = "UTF-8-BOM",
+  check.names = FALSE
+)
+
+fpkm_raw <- read_excel(slc_input("hyu_fpkm"))
+
+gene_annot <- fpkm_raw %>%
+  select(ens_id = 1, gene_symbol = 2) %>%
+  mutate(gene_symbol = as.character(gene_symbol))
+
+expr_tbl <- fpkm_raw %>%
+  select(-1, -2) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  bind_cols(gene_symbol = gene_annot$gene_symbol, .) %>%
+  filter(!is.na(gene_symbol), gene_symbol != "") %>%
+  group_by(gene_symbol) %>%
+  summarise(across(everything(), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+
+expr_fpkm <- expr_tbl %>%
+  column_to_rownames("gene_symbol") %>%
+  as.matrix()
+
+common_samples <- intersect(colnames(expr_fpkm), metadata$Sample)
+expr_fpkm <- expr_fpkm[, common_samples, drop = FALSE]
+
+metadata <- metadata %>%
+  filter(Sample %in% common_samples) %>%
+  distinct(Sample, .keep_all = TRUE) %>%
+  arrange(match(Sample, common_samples))
+
+rownames(metadata) <- metadata$Sample
+expr_fpkm <- expr_fpkm[, rownames(metadata), drop = FALSE]
+
+stopifnot(identical(colnames(expr_fpkm), rownames(metadata)))
+
+cat("HYU matched cohort n:", ncol(expr_fpkm), "\n")
+cat("One matched sample without fibrosis annotation is excluded below.\n")
+
+table(metadata$Disease, useNA = "ifany")
+```
+
+# 5. Metadata Cleaning
+
+```{r metadata_cleaning}
+batch_col <- names(metadata)[str_detect(names(metadata), "^기관코드")][1]
+stopifnot(!is.na(batch_col))
+
+metadata2 <- metadata %>%
+  mutate(
+    disease_code = as.character(Disease),
+    disease_group = case_when(
+      disease_code == "1" ~ "Control",
+      disease_code %in% c("2", "3") ~ "MASLD",
+      TRUE ~ NA_character_
+    ),
+    disease_group = factor(disease_group, levels = c("Control", "MASLD")),
+    batch = factor(.data[[batch_col]]),
+    gender = factor(Gender),
+    age = suppressWarnings(as.numeric(Age)),
+    fibrosis_raw = as.character(Degree_of_fibrosis),
+    fibrosis_stage = case_when(
+      fibrosis_raw == "0" ~ 0,
+      fibrosis_raw %in% c("1A", "1B", "1C") ~ 1,
+      fibrosis_raw == "2" ~ 2,
+      fibrosis_raw == "3" ~ 3,
+      fibrosis_raw == "4" ~ 4,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  filter(
+    !is.na(disease_group),
+    !is.na(fibrosis_stage),
+    !is.na(batch),
+    !is.na(gender),
+    !is.na(age)
+  )
+
+expr_log <- log2(expr_fpkm[, rownames(metadata2), drop = FALSE] + 1)
+
+cat("Analysis cohort n:", ncol(expr_log), "\n")
+if (ncol(expr_log) != expected_n) {
+  warning(
+    "Analysis cohort n is ", ncol(expr_log),
+    ", not expected_n = ", expected_n,
+    ". Check fibrosis annotation filtering."
+  )
+}
+cat("Disease group table:\n")
+print(table(metadata2$disease_group, useNA = "ifany"))
+cat("Fibrosis stage table:\n")
+print(table(metadata2$fibrosis_stage, useNA = "ifany"))
+```
+
+# 6. MASLD Elevation Test
+
+```{r masld_elevation}
+candidate_present <- candidate_genes %>%
+  filter(gene %in% rownames(expr_log))
+
+cat("Candidate genes present in HYU FPKM matrix:", nrow(candidate_present), "\n")
+cat("SLC7A5 present in HYU FPKM matrix:", "SLC7A5" %in% rownames(expr_log), "\n")
+
+expr_candidate <- expr_log[candidate_present$gene, , drop = FALSE]
+
+test_masld_elevation <- function(gene) {
+  x <- as.numeric(expr_log[gene, ])
+  group <- metadata2$disease_group
+
+  control_expr <- x[group == "Control"]
+  masld_expr <- x[group == "MASLD"]
+
+  tibble(
+    gene = gene,
+    control_n = length(control_expr),
+    masld_n = length(masld_expr),
+    control_mean = mean(control_expr, na.rm = TRUE),
+    masld_mean = mean(masld_expr, na.rm = TRUE),
+    masld_log2FC = masld_mean - control_mean,
+    masld_pvalue = wilcox.test(masld_expr, control_expr, exact = FALSE)$p.value
+  )
+}
+
+elevation_res <- map_dfr(candidate_present$gene, test_masld_elevation) %>%
+  mutate(masld_qvalue = p.adjust(masld_pvalue, method = "BH")) %>%
+  arrange(masld_qvalue)
+
+write.csv(
+  elevation_res,
+  file.path(out_dir, "HYU_MASLD_vs_control_candidate_gene_limma.csv"),
+  row.names = FALSE
+)
+
+head(elevation_res, 20)
+```
+
+# 7. Fibrosis Severity Correlation
+
+```{r fibrosis_correlation}
+cor_one_gene <- function(gene) {
+  md <- metadata2
+
+  x <- as.numeric(expr_log[gene, rownames(md)])
+  y <- md$fibrosis_stage
+
+  ok <- is.finite(x) & is.finite(y)
+  if (sum(ok) < 3 || length(unique(x[ok])) < 2 || length(unique(y[ok])) < 2) {
+    return(tibble(
+      gene = gene,
+      fibrosis_n = sum(ok),
+      fibrosis_rho = NA_real_,
+      fibrosis_pvalue = NA_real_
+    ))
+  }
+
+  test <- suppressWarnings(cor.test(x[ok], y[ok], method = "spearman", exact = FALSE))
+
+  tibble(
+    gene = gene,
+    fibrosis_n = sum(ok),
+    fibrosis_rho = unname(test$estimate),
+    fibrosis_pvalue = test$p.value
+  )
+}
+
+fibrosis_res <- map_dfr(candidate_present$gene, cor_one_gene) %>%
+  mutate(fibrosis_qvalue = p.adjust(fibrosis_pvalue, method = "BH")) %>%
+  arrange(fibrosis_qvalue)
+
+write.csv(
+  fibrosis_res,
+  file.path(out_dir, "HYU_candidate_gene_fibrosis_spearman_n159.csv"),
+  row.names = FALSE
+)
+
+head(fibrosis_res, 20)
+```
+
+# 8. Final Validated Gene List and XX
+
+```{r final_validated_genes}
+validated_genes <- candidate_present %>%
+  select(gene, lps_log2FC, lps_padj, kd_log2FC, kd_padj) %>%
+  left_join(elevation_res, by = "gene") %>%
+  left_join(fibrosis_res, by = "gene") %>%
+  mutate(
+    elevated_in_MASLD = !is.na(masld_qvalue) &
+      masld_qvalue < q_cutoff_validation &
+      masld_log2FC > min_abs_log2fc_validation,
+    positive_fibrosis_correlation = !is.na(fibrosis_qvalue) &
+      fibrosis_qvalue < q_cutoff_validation &
+      fibrosis_rho > 0,
+    validated = elevated_in_MASLD & positive_fibrosis_correlation
+  ) %>%
+  arrange(desc(validated), masld_qvalue, fibrosis_qvalue)
+
+validated_only <- validated_genes %>% filter(validated)
+XX <- nrow(validated_only)
+
+cat("XX validated genes:", XX, "\n")
+cat("SLC7A5 validated:", "SLC7A5" %in% validated_only$gene, "\n")
+cat(
+  "Manuscript sentence:\n",
+  "Validation in an independent bulk RNA-seq cohort with fibrosis annotation (n = ",
+  ncol(expr_log),
+  ") confirmed that ",
+  XX,
+  " of these genes, including SLC7A5, were consistently elevated in MASLD and positively correlated with fibrosis severity.\n",
+  sep = ""
+)
+
+write.csv(
+  validated_genes,
+  file.path(out_dir, "HYU_candidate_gene_validation_all_results.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  validated_only,
+  file.path(out_dir, "HYU_validated_genes_for_XX.csv"),
+  row.names = FALSE
+)
+
+validated_only
+```
+
+# 9. Visualization
+
+## 9-1. SLC7A5 Expression and Fibrosis
+
+```{r slc7a5_plots, fig.width=10, fig.height=4}
+plot_gene <- "SLC7A5"
+
+if (plot_gene %in% rownames(expr_log)) {
+  plot_df <- metadata2 %>%
+    mutate(expr = as.numeric(expr_log[plot_gene, rownames(metadata2)]))
+
+  p1 <- ggplot(plot_df, aes(x = disease_group, y = expr, fill = disease_group)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    geom_jitter(width = 0.15, size = 1.8, alpha = 0.8) +
+    scale_fill_brewer(palette = "Set2") +
+    labs(x = NULL, y = "log2(FPKM + 1)", title = paste0(plot_gene, " in MASLD")) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+  p2 <- ggplot(plot_df, aes(x = fibrosis_stage, y = expr)) +
+    geom_point(size = 2, alpha = 0.8) +
+    geom_smooth(method = "lm", se = TRUE, color = "#2C7FB8") +
+    scale_x_continuous(breaks = sort(unique(plot_df$fibrosis_stage))) +
+    labs(x = "Fibrosis stage", y = "log2(FPKM + 1)",
+         title = paste0(plot_gene, " vs fibrosis severity")) +
+    theme_bw()
+
+  print(p1)
+  print(p2)
+
+  ggsave(file.path(fig_dir, "SLC7A5_MASLD_expression_boxplot.png"), p1, width = 5, height = 4, dpi = 300)
+  ggsave(file.path(fig_dir, "SLC7A5_fibrosis_correlation.png"), p2, width = 5, height = 4, dpi = 300)
+} else {
+  cat("SLC7A5 was not found in the expression matrix.\n")
+}
+```
+
+## 9-2. Validated Gene Heatmap
+
+```{r validated_heatmap, fig.width=10, fig.height=8}
+if (nrow(validated_only) >= 2) {
+  heat_genes <- validated_only$gene
+  heat_mat <- expr_log[heat_genes, , drop = FALSE]
+
+  ann_col <- metadata2 %>%
+    select(disease_group, fibrosis_stage, batch) %>%
+    as.data.frame()
+  rownames(ann_col) <- rownames(metadata2)
+
+  pheatmap(
+    heat_mat,
+    scale = "row",
+    annotation_col = ann_col,
+    show_colnames = FALSE,
+    clustering_method = "ward.D2",
+    color = colorRampPalette(c("#2166AC", "white", "#B2182B"))(200),
+    main = paste0("Validated genes in HYU cohort (XX = ", XX, ")")
+  )
+} else {
+  cat("Fewer than two validated genes; heatmap skipped.\n")
+}
+```
+
+## 9-3. Validation Summary Plot
+
+```{r validation_summary_plot, fig.width=7, fig.height=6}
+summary_plot_df <- validated_genes %>%
+  mutate(
+    label = if_else(validated | gene == "SLC7A5", gene, NA_character_)
+  )
+
+p_summary <- ggplot(
+  summary_plot_df,
+  aes(x = masld_log2FC, y = fibrosis_rho, color = validated, label = label)
+) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_point(size = 2.4, alpha = 0.85) +
+  geom_text_repel(max.overlaps = Inf, size = 3) +
+  scale_color_manual(values = c(`FALSE` = "grey65", `TRUE` = "#D95F02")) +
+  labs(
+    x = "MASLD vs control log2FC",
+    y = "Spearman rho with fibrosis stage",
+    color = "Validated",
+    title = paste0("HYU independent cohort validation (XX = ", XX, ")")
+  ) +
+  theme_bw()
+
+print(p_summary)
+ggsave(file.path(fig_dir, "HYU_validation_summary_scatter.png"), p_summary, width = 7, height = 6, dpi = 300)
+```
+
+# 10. Session Info
+
+```{r session_info}
+sessionInfo()
+```

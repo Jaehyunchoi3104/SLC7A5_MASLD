@@ -1,0 +1,783 @@
+---
+title: "Supplementary Figure S3 - Shared NF-kB Target Genes"
+author: "SLC7A5 monocyte project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r repository-setup, include=FALSE}
+.slc_start <- Sys.getenv("SLC7A5_REPO_ROOT", unset = getwd())
+.slc_repo <- normalizePath(.slc_start, mustWork = TRUE)
+while (!file.exists(file.path(.slc_repo, "R", "paths.R"))) {
+  .slc_parent <- dirname(.slc_repo)
+  if (identical(.slc_parent, .slc_repo)) stop("Start inside the repository or set SLC7A5_REPO_ROOT.")
+  .slc_repo <- .slc_parent
+}
+source(file.path(.slc_repo, "R", "paths.R"))
+slc_setup("nfkb_shared")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center"
+)
+```
+
+# 1. Analysis Goal
+
+This analysis defines shared NF-kB target genes that are:
+
+1. Upregulated by LPS in the bulk RNA-seq comparison.
+2. Upregulated in the MASLD SLC7A5-high myeloid/monocyte signature.
+3. Annotated as NF-kB pathway target genes.
+
+The resulting gene set is then tested in the bulk RNA-seq samples:
+
+- siControl
+- siControl + LPS
+- siSLC7A5 + LPS
+
+Expected pattern:
+
+- siControl: low
+- siControl + LPS: high
+- siSLC7A5 + LPS: reduced
+
+# 2. Libraries and Parameters
+
+```{r libraries}
+required_pkgs <- c(
+  "dplyr", "tidyr", "readr", "ggplot2", "pheatmap", "tibble",
+  "stringr", "purrr", "scales"
+)
+
+missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_pkgs) > 0) {
+  stop(
+    "Missing required R packages: ",
+    paste(missing_pkgs, collapse = ", "),
+    "\nInstall them before knitting this Rmd."
+  )
+}
+
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+library(pheatmap)
+library(tibble)
+library(stringr)
+library(purrr)
+library(scales)
+```
+
+```{r parameters}
+project_dir <- slc_output_dir("02_SLC7A5_mono_Journal")
+bulk_dir <- slc_output_dir("02_SLC7A5_mono_Journal/04_bulkRNAseq")
+out_dir <- slc_output_dir("02_SLC7A5_mono_Journal/04_bulkRNAseq/SupplFigS3_shared_NFKB_targets")
+lps_deg_file <- slc_input("bulk_nosi_lps_deg")
+masld_slc7a5_high_deg_file <- slc_input("scrna_myeloid_deg")
+tpm_file <- slc_input("bulk_tpm")
+nfkb_local_gsea_file <- slc_input("scrna_myeloid_gsea", required = FALSE)
+
+# DEG thresholds.
+# For LPS bulk RNA-seq, keep a stricter fold-change threshold by default.
+lps_padj_cutoff <- 0.05
+lps_log2fc_min <- 1
+
+# For scRNA-seq SLC7A5-high signature, logfoldchanges may be natural-log-like
+# depending on the upstream tool. Keep this less strict by default.
+masld_padj_cutoff <- 0.05
+masld_logfc_min <- 0.25
+
+# Heatmap/sample options.
+exclude_samples <- c("siCon_1")
+zscore_cap <- 2
+
+# Candidate genes for S3B. The final plot keeps genes present in the shared
+# gene set and in the bulk expression matrix, then prioritizes genes showing
+# LPS-up and siSLC7A5-LPS-down behavior.
+representative_candidates <- c(
+  "IL1B", "TNF", "CXCL8", "CCL2", "NFKBIA", "TNFAIP3", "ICAM1", "PTGS2",
+  "CXCL1", "CXCL2", "CXCL3", "IL6", "BIRC3", "SOD2", "JUNB", "FOS",
+  "DUSP1", "SOCS3", "TNFAIP6", "PTX3"
+)
+
+stopifnot(file.exists(lps_deg_file))
+stopifnot(file.exists(masld_slc7a5_high_deg_file))
+stopifnot(file.exists(tpm_file))
+```
+
+# 3. Helper Functions
+
+```{r helper-functions}
+standardize_deg <- function(df) {
+  nm <- names(df)
+
+  gene_col <- dplyr::case_when(
+    "gene" %in% nm ~ "gene",
+    "gene_name" %in% nm ~ "gene_name",
+    "Gene" %in% nm ~ "Gene",
+    "names" %in% nm ~ "names",
+    TRUE ~ NA_character_
+  )
+
+  lfc_col <- dplyr::case_when(
+    "log2FoldChange" %in% nm ~ "log2FoldChange",
+    "logfoldchanges" %in% nm ~ "logfoldchanges",
+    "avg_log2FC" %in% nm ~ "avg_log2FC",
+    "avg_logFC" %in% nm ~ "avg_logFC",
+    "logFC" %in% nm ~ "logFC",
+    TRUE ~ NA_character_
+  )
+
+  padj_col <- dplyr::case_when(
+    "padj" %in% nm ~ "padj",
+    "pvals_adj" %in% nm ~ "pvals_adj",
+    "p_val_adj" %in% nm ~ "p_val_adj",
+    "FDR" %in% nm ~ "FDR",
+    TRUE ~ NA_character_
+  )
+
+  if (is.na(gene_col) || is.na(lfc_col) || is.na(padj_col)) {
+    stop(
+      "Cannot identify gene/logFC/adjusted-p columns. Columns are: ",
+      paste(nm, collapse = ", ")
+    )
+  }
+
+  df %>%
+    transmute(
+      gene = toupper(as.character(.data[[gene_col]])),
+      logFC = suppressWarnings(as.numeric(.data[[lfc_col]])),
+      padj = suppressWarnings(as.numeric(.data[[padj_col]]))
+    ) %>%
+    filter(!is.na(gene), gene != "", !is.na(logFC), !is.na(padj)) %>%
+    distinct(gene, .keep_all = TRUE)
+}
+
+row_zscore <- function(mat) {
+  z <- t(scale(t(mat)))
+  z[is.na(z)] <- 0
+  z
+}
+
+mean_sem <- function(x) {
+  x <- x[!is.na(x)]
+  tibble(
+    mean = mean(x),
+    sem = stats::sd(x) / sqrt(length(x))
+  )
+}
+
+sample_to_group <- function(sample) {
+  dplyr::case_when(
+    grepl("^siCon_LPS", sample) ~ "siControl + LPS",
+    grepl("^siSLC_LPS5", sample) ~ "siSLC7A5 + LPS",
+    grepl("^siCon", sample) ~ "siControl",
+    TRUE ~ sample
+  )
+}
+
+safe_t_test <- function(df, value_col, group_a, group_b) {
+  x <- df %>% filter(group == group_a) %>% pull(all_of(value_col))
+  y <- df %>% filter(group == group_b) %>% pull(all_of(value_col))
+  if (length(x) < 2 || length(y) < 2) return(NA_real_)
+  stats::t.test(x, y)$p.value
+}
+
+p_to_star <- function(p) {
+  dplyr::case_when(
+    is.na(p) ~ "n.s.",
+    p < 0.001 ~ "***",
+    p < 0.01 ~ "**",
+    p < 0.05 ~ "*",
+    TRUE ~ "n.s."
+  )
+}
+```
+
+# 4. Define NF-kB Target Genes
+
+The preferred source is MSigDB Hallmark `HALLMARK_TNFA_SIGNALING_VIA_NFKB` through `msigdbr`, if installed. If `msigdbr` is unavailable, this Rmd falls back to local GSEA leading-edge genes and a small curated NF-kB target list.
+
+```{r nfkb-target-genes}
+manual_nfkb_targets <- toupper(c(
+  "IL1B", "TNF", "CXCL8", "CCL2", "NFKBIA", "TNFAIP3", "ICAM1", "PTGS2",
+  "IL6", "CXCL1", "CXCL2", "CXCL3", "CXCL10", "CCL3", "CCL4", "CCL5",
+  "NFKB1", "NFKB2", "RELA", "REL", "RELB", "NFKBIB", "NFKBIE",
+  "BIRC2", "BIRC3", "TRAF1", "TRAF2", "TRAF3", "MAP3K8", "MYD88",
+  "TLR2", "TLR4", "CD14", "LY96", "IRAK1", "IRAK2", "TANK",
+  "SOCS3", "DUSP1", "DUSP2", "JUN", "JUNB", "FOS", "FOSB", "ATF3",
+  "EGR1", "EGR2", "EGR3", "IER2", "IER3", "ZFP36", "KLF6", "KLF9",
+  "NFKBIZ", "TNFAIP2", "TNFAIP6", "TNIP1", "TNIP2", "ZC3H12A",
+  "SOD2", "NAMPT", "PLAUR", "PTX3", "SERPINE1", "GADD45B", "G0S2",
+  "MCL1", "BCL2A1", "CD44", "CD69", "CEBPB", "CEBPD", "HBEGF",
+  "AREG", "VEGFA", "LIF", "IL18", "IFNGR2", "KYNU", "BCL6", "BTG1",
+  "BTG2", "RHOB", "NR4A1", "NR4A2", "MARCKS", "SAT1", "SLC2A3"
+))
+
+msig_nfkb_targets <- character(0)
+if (requireNamespace("msigdbr", quietly = TRUE)) {
+  msig_nfkb_targets <- msigdbr::msigdbr(
+    species = "Homo sapiens",
+    category = "H"
+  ) %>%
+    filter(gs_name == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>%
+    pull(gene_symbol) %>%
+    toupper() %>%
+    unique()
+}
+
+local_nfkb_targets <- character(0)
+if (file.exists(nfkb_local_gsea_file)) {
+  local_gsea <- suppressMessages(readr::read_csv(nfkb_local_gsea_file))
+  local_nfkb_targets <- local_gsea %>%
+    filter(str_detect(tolower(Term), "nf-kb|nfkb|tnf-alpha")) %>%
+    pull(Lead_genes) %>%
+    str_split(";") %>%
+    unlist() %>%
+    toupper() %>%
+    unique()
+}
+
+nfkb_targets <- unique(c(msig_nfkb_targets, local_nfkb_targets, manual_nfkb_targets))
+
+nfkb_source_summary <- tibble(
+  source = c("MSigDB_Hallmark_msigdbr", "local_GSEA_leading_edge", "manual_curated_fallback", "union"),
+  n_genes = c(
+    length(msig_nfkb_targets),
+    length(local_nfkb_targets),
+    length(manual_nfkb_targets),
+    length(nfkb_targets)
+  )
+)
+
+readr::write_csv(nfkb_source_summary, file.path(out_dir, "S3_NFKB_target_source_summary.csv"))
+readr::write_csv(tibble(gene = sort(nfkb_targets)), file.path(out_dir, "S3_NFKB_target_genes_union.csv"))
+
+nfkb_source_summary
+```
+
+# 5. Create Shared NF-kB Target Gene List
+
+```{r shared-gene-list}
+lps_deg <- suppressMessages(readr::read_csv(lps_deg_file)) %>%
+  standardize_deg()
+
+masld_deg <- suppressMessages(readr::read_csv(masld_slc7a5_high_deg_file)) %>%
+  standardize_deg()
+
+lps_up_genes <- lps_deg %>%
+  filter(padj < lps_padj_cutoff, logFC > lps_log2fc_min) %>%
+  pull(gene) %>%
+  unique()
+
+masld_slc7a5_high_up_genes <- masld_deg %>%
+  filter(padj < masld_padj_cutoff, logFC > masld_logfc_min) %>%
+  pull(gene) %>%
+  unique()
+
+shared_nfkb_genes <- Reduce(
+  intersect,
+  list(lps_up_genes, masld_slc7a5_high_up_genes, nfkb_targets)
+) %>%
+  sort()
+
+shared_gene_table <- tibble(gene = shared_nfkb_genes) %>%
+  left_join(lps_deg %>% rename(lps_logFC = logFC, lps_padj = padj), by = "gene") %>%
+  left_join(masld_deg %>% rename(masld_logFC = logFC, masld_padj = padj), by = "gene") %>%
+  arrange(desc(lps_logFC), masld_padj)
+
+gene_set_summary <- tibble(
+  category = c(
+    "LPS_up_bulk",
+    "MASLD_SLC7A5_high_myeloid_up",
+    "NF-kB_targets",
+    "Shared_NF-kB_targets"
+  ),
+  n_genes = c(
+    length(lps_up_genes),
+    length(masld_slc7a5_high_up_genes),
+    length(nfkb_targets),
+    length(shared_nfkb_genes)
+  )
+)
+
+readr::write_csv(gene_set_summary, file.path(out_dir, "S3_shared_NFKB_gene_set_summary.csv"))
+readr::write_csv(shared_gene_table, file.path(out_dir, "S3_shared_NFKB_target_genes.csv"))
+
+gene_set_summary
+```
+
+```{r show-shared-genes}
+if (length(shared_nfkb_genes) < 3) {
+  warning(
+    "Shared NF-kB target gene set has fewer than 3 genes. ",
+    "Consider relaxing lps_log2fc_min or masld_logfc_min in the parameter block."
+  )
+}
+
+shared_gene_table
+```
+
+# 6. Load Bulk Expression Matrix
+
+```{r bulk-expression}
+tpm_raw <- suppressMessages(readr::read_tsv(tpm_file))
+
+gene_col <- dplyr::case_when(
+  "gene_name" %in% names(tpm_raw) ~ "gene_name",
+  "gene" %in% names(tpm_raw) ~ "gene",
+  "gene_id" %in% names(tpm_raw) ~ "gene_id",
+  TRUE ~ names(tpm_raw)[1]
+)
+
+expr_tbl <- tpm_raw %>%
+  mutate(gene = toupper(as.character(.data[[gene_col]]))) %>%
+  select(gene, where(is.numeric)) %>%
+  group_by(gene) %>%
+  summarise(across(everything(), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
+  filter(!is.na(gene), gene != "")
+
+sample_cols <- setdiff(names(expr_tbl), "gene")
+sample_cols <- setdiff(sample_cols, exclude_samples)
+
+expr_mat <- expr_tbl %>%
+  select(gene, all_of(sample_cols)) %>%
+  column_to_rownames("gene") %>%
+  as.matrix()
+
+log_expr_mat <- log2(expr_mat + 1)
+
+sample_info <- tibble(
+  sample = colnames(log_expr_mat),
+  group = sample_to_group(sample)
+) %>%
+  mutate(group = factor(group, levels = c("siControl", "siControl + LPS", "siSLC7A5 + LPS")))
+
+sample_info
+```
+
+# 7. S3A - Heatmap of Shared NF-kB Targets
+
+```{r heatmap-data}
+heatmap_genes <- intersect(shared_nfkb_genes, rownames(log_expr_mat))
+
+missing_heatmap_genes <- setdiff(shared_nfkb_genes, rownames(log_expr_mat))
+if (length(missing_heatmap_genes) > 0) {
+  readr::write_csv(
+    tibble(gene = missing_heatmap_genes),
+    file.path(out_dir, "S3_shared_NFKB_genes_missing_from_bulk_TPM.csv")
+  )
+}
+
+if (length(heatmap_genes) < 2) {
+  stop("Fewer than 2 shared NF-kB target genes are present in the bulk TPM matrix.")
+}
+
+heatmap_mat <- log_expr_mat[heatmap_genes, , drop = FALSE]
+heatmap_z <- row_zscore(heatmap_mat)
+heatmap_z <- pmax(pmin(heatmap_z, zscore_cap), -zscore_cap)
+
+gene_order_tbl <- shared_gene_table %>%
+  filter(gene %in% rownames(heatmap_z)) %>%
+  arrange(desc(lps_logFC), masld_padj)
+
+heatmap_z <- heatmap_z[gene_order_tbl$gene, sample_info$sample, drop = FALSE]
+
+annotation_col <- sample_info %>%
+  select(sample, group) %>%
+  column_to_rownames("sample") %>%
+  as.data.frame()
+
+ann_colors <- list(
+  group = c(
+    "siControl" = "#4D4D4D",
+    "siControl + LPS" = "#D55E00",
+    "siSLC7A5 + LPS" = "#0072B2"
+  )
+)
+
+readr::write_csv(
+  as.data.frame(heatmap_z) %>% rownames_to_column("gene"),
+  file.path(out_dir, "S3A_shared_NFKB_heatmap_zscore_matrix.csv")
+)
+```
+
+```{r S3A-heatmap, fig.width=5.2, fig.height=6.2}
+p_heatmap <- pheatmap(
+  heatmap_z,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  annotation_col = annotation_col,
+  annotation_colors = ann_colors,
+  color = colorRampPalette(c("#2166AC", "white", "#B2182B"))(101),
+  breaks = seq(-zscore_cap, zscore_cap, length.out = 102),
+  fontsize = 8,
+  fontsize_row = ifelse(nrow(heatmap_z) > 35, 5.5, 7),
+  fontsize_col = 8,
+  border_color = NA,
+  main = "Shared NF-kB target genes"
+)
+
+pdf(file.path(out_dir, "S3A_shared_NFKB_targets_heatmap.pdf"), width = 5.2, height = 6.2)
+print(p_heatmap)
+dev.off()
+
+png(file.path(out_dir, "S3A_shared_NFKB_targets_heatmap.png"), width = 5.2, height = 6.2, units = "in", res = 300)
+print(p_heatmap)
+dev.off()
+```
+
+# 8. S3C - NF-kB Target Gene-Set Score
+
+Mean z-score module score is calculated for each sample using all shared NF-kB target genes.
+
+```{r geneset-score-data}
+score_df <- heatmap_z %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "sample", values_to = "zscore") %>%
+  group_by(sample) %>%
+  summarise(NFKB_target_score = mean(zscore, na.rm = TRUE), .groups = "drop") %>%
+  left_join(sample_info, by = "sample")
+
+score_stats <- score_df %>%
+  group_by(group) %>%
+  summarise(mean_sem(NFKB_target_score), .groups = "drop")
+
+score_pvals <- tibble(
+  comparison = c("siControl + LPS vs siControl", "siSLC7A5 + LPS vs siControl + LPS"),
+  p_value = c(
+    safe_t_test(score_df, "NFKB_target_score", "siControl + LPS", "siControl"),
+    safe_t_test(score_df, "NFKB_target_score", "siSLC7A5 + LPS", "siControl + LPS")
+  )
+) %>%
+  mutate(p_adj_BH = p.adjust(p_value, method = "BH"))
+
+readr::write_csv(score_df, file.path(out_dir, "S3C_shared_NFKB_module_score_by_sample.csv"))
+readr::write_csv(score_stats, file.path(out_dir, "S3C_shared_NFKB_module_score_group_summary.csv"))
+readr::write_csv(score_pvals, file.path(out_dir, "S3C_shared_NFKB_module_score_ttest.csv"))
+
+score_df
+score_pvals
+```
+
+```{r S3C-geneset-score, fig.width=4.2, fig.height=4.2}
+group_colors <- c(
+  "siControl" = "#4D4D4D",
+  "siControl + LPS" = "#D55E00",
+  "siSLC7A5 + LPS" = "#0072B2"
+)
+
+p_score <- ggplot(score_df, aes(x = group, y = NFKB_target_score, color = group)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, linewidth = 0.45, color = "grey25") +
+  geom_jitter(width = 0.08, size = 2.7, alpha = 0.95) +
+  scale_color_manual(values = group_colors) +
+  labs(x = NULL, y = "Mean z-score", title = "Shared NF-kB target score") +
+  theme_classic(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 35, hjust = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+p_score
+
+ggsave(file.path(out_dir, "S3C_shared_NFKB_target_score.pdf"), p_score, width = 4.2, height = 4.2)
+ggsave(file.path(out_dir, "S3C_shared_NFKB_target_score.png"), p_score, width = 4.2, height = 4.2, dpi = 300)
+```
+
+# 9. S3B - Representative NF-kB Target Gene Plots
+
+Representative genes are selected from the candidate list if they are in the shared NF-kB gene set and show the expected bulk RNA-seq pattern. If fewer than 6 candidate genes pass, additional shared NF-kB genes are added based on high LPS induction and stronger reduction by siSLC7A5 knockdown.
+
+```{r representative-gene-selection}
+expr_long <- log_expr_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  filter(gene %in% heatmap_genes) %>%
+  pivot_longer(-gene, names_to = "sample", values_to = "log2_TPM") %>%
+  left_join(sample_info, by = "sample")
+
+gene_pattern <- expr_long %>%
+  group_by(gene, group) %>%
+  summarise(mean_log2_TPM = mean(log2_TPM), .groups = "drop") %>%
+  pivot_wider(names_from = group, values_from = mean_log2_TPM) %>%
+  mutate(
+    lps_induction = `siControl + LPS` - siControl,
+    kd_reduction = `siControl + LPS` - `siSLC7A5 + LPS`,
+    expected_pattern = lps_induction > 0 & kd_reduction > 0
+  ) %>%
+  left_join(shared_gene_table, by = "gene") %>%
+  arrange(desc(expected_pattern), desc(kd_reduction), desc(lps_induction), masld_padj)
+
+candidate_selected <- gene_pattern %>%
+  filter(gene %in% toupper(representative_candidates), expected_pattern) %>%
+  arrange(match(gene, toupper(representative_candidates))) %>%
+  pull(gene)
+
+fallback_selected <- gene_pattern %>%
+  filter(expected_pattern, !gene %in% candidate_selected) %>%
+  pull(gene)
+
+representative_genes <- unique(c(candidate_selected, fallback_selected)) %>%
+  head(8)
+
+if (length(representative_genes) < 6) {
+  representative_genes <- unique(c(
+    representative_genes,
+    gene_pattern %>% filter(!gene %in% representative_genes) %>% pull(gene)
+  )) %>%
+    head(8)
+}
+
+readr::write_csv(gene_pattern, file.path(out_dir, "S3B_shared_NFKB_gene_bulk_pattern_summary.csv"))
+readr::write_csv(tibble(gene = representative_genes), file.path(out_dir, "S3B_representative_genes_selected.csv"))
+
+representative_genes
+```
+
+```{r representative-gene-plot-data}
+rep_expr <- expr_long %>%
+  filter(gene %in% representative_genes) %>%
+  mutate(gene = factor(gene, levels = representative_genes))
+
+rep_stats <- rep_expr %>%
+  group_by(gene, group) %>%
+  summarise(mean_sem(log2_TPM), .groups = "drop")
+
+rep_pvals <- rep_expr %>%
+  group_by(gene) %>%
+  group_modify(~ tibble(
+    p_LPS_vs_control = safe_t_test(.x, "log2_TPM", "siControl + LPS", "siControl"),
+    p_KD_vs_LPS = safe_t_test(.x, "log2_TPM", "siSLC7A5 + LPS", "siControl + LPS")
+  )) %>%
+  ungroup() %>%
+  mutate(
+    padj_LPS_vs_control = p.adjust(p_LPS_vs_control, method = "BH"),
+    padj_KD_vs_LPS = p.adjust(p_KD_vs_LPS, method = "BH")
+  )
+
+rep_sig_anno <- rep_pvals %>%
+  select(gene, padj_LPS_vs_control, padj_KD_vs_LPS) %>%
+  pivot_longer(
+    cols = starts_with("padj_"),
+    names_to = "comparison",
+    values_to = "padj"
+  ) %>%
+  mutate(
+    gene = factor(gene, levels = representative_genes),
+    x_start = ifelse(comparison == "padj_LPS_vs_control", 1, 2),
+    x_end = ifelse(comparison == "padj_LPS_vs_control", 2, 3),
+    x_mid = (x_start + x_end) / 2,
+    label = p_to_star(padj)
+  ) %>%
+  left_join(
+    rep_expr %>%
+      group_by(gene) %>%
+      summarise(
+        y_max = max(log2_TPM, na.rm = TRUE),
+        y_min = min(log2_TPM, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        y_range = pmax(y_max - y_min, 0.25),
+        y_base = y_max + 0.10 * y_range
+      ),
+    by = "gene"
+  ) %>%
+  group_by(gene) %>%
+  arrange(comparison, .by_group = TRUE) %>%
+  mutate(
+    y = y_base + (row_number() - 1) * 0.18 * y_range,
+    y_tick = y - 0.04 * y_range
+  ) %>%
+  ungroup()
+
+readr::write_csv(rep_expr, file.path(out_dir, "S3B_representative_gene_expression_by_sample.csv"))
+readr::write_csv(rep_stats, file.path(out_dir, "S3B_representative_gene_expression_group_summary.csv"))
+readr::write_csv(rep_pvals, file.path(out_dir, "S3B_representative_gene_ttest.csv"))
+readr::write_csv(rep_sig_anno, file.path(out_dir, "S3B_representative_gene_adjusted_pvalue_annotations.csv"))
+
+rep_pvals
+```
+
+```{r S3B-representative-gene-plots, fig.width=8.2, fig.height=5.2}
+p_rep <- ggplot(rep_expr, aes(x = group, y = log2_TPM, color = group)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, linewidth = 0.35, color = "grey25") +
+  geom_jitter(width = 0.08, size = 1.8, alpha = 0.95) +
+  geom_segment(
+    data = rep_sig_anno,
+    aes(x = x_start, xend = x_end, y = y, yend = y),
+    inherit.aes = FALSE,
+    linewidth = 0.35,
+    color = "grey20"
+  ) +
+  geom_segment(
+    data = rep_sig_anno,
+    aes(x = x_start, xend = x_start, y = y, yend = y_tick),
+    inherit.aes = FALSE,
+    linewidth = 0.35,
+    color = "grey20"
+  ) +
+  geom_segment(
+    data = rep_sig_anno,
+    aes(x = x_end, xend = x_end, y = y, yend = y_tick),
+    inherit.aes = FALSE,
+    linewidth = 0.35,
+    color = "grey20"
+  ) +
+  geom_text(
+    data = rep_sig_anno,
+    aes(x = x_mid, y = y + 0.04 * y_range, label = label),
+    inherit.aes = FALSE,
+    size = 3.2,
+    color = "grey10"
+  ) +
+  facet_wrap(~ gene, scales = "free_y", ncol = 4) +
+  scale_color_manual(values = group_colors) +
+  labs(x = NULL, y = "log2(TPM + 1)", title = "Representative shared NF-kB targets") +
+  theme_classic(base_size = 10) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+p_rep
+
+ggsave(file.path(out_dir, "S3B_representative_shared_NFKB_targets.pdf"), p_rep, width = 8.2, height = 5.2)
+ggsave(file.path(out_dir, "S3B_representative_shared_NFKB_targets.png"), p_rep, width = 8.2, height = 5.2, dpi = 300)
+```
+
+# 10. S3B — DESeq2-based Significance
+
+t-test 대신 DESeq2 결과(padj)를 그대로 가져와 유의성 표시를 붙인 버전.
+동일한 boxplot + log2(TPM+1) 데이터를 사용하되, 별표만 DESeq2 기준으로 교체합니다.
+
+```{r deseq2-pvals}
+kd_deg_file <- slc_input("bulk_nosi_kd_deg")
+stopifnot(file.exists(kd_deg_file))
+
+kd_deg <- suppressMessages(readr::read_csv(kd_deg_file)) %>%
+  standardize_deg()
+
+# representative_genes 각각에 대해 DESeq2 padj 추출
+deseq2_pvals <- tibble(gene = representative_genes) %>%
+  left_join(lps_deg %>% select(gene, padj_LPS_vs_control = padj), by = "gene") %>%
+  left_join(kd_deg  %>% select(gene, padj_KD_vs_LPS      = padj), by = "gene")
+
+deseq2_pvals
+```
+
+```{r deseq2-sig-anno}
+rep_sig_anno_deseq2 <- deseq2_pvals %>%
+  pivot_longer(
+    cols      = starts_with("padj_"),
+    names_to  = "comparison",
+    values_to = "padj"
+  ) %>%
+  mutate(
+    gene    = factor(gene, levels = representative_genes),
+    x_start = ifelse(comparison == "padj_LPS_vs_control", 1, 2),
+    x_end   = ifelse(comparison == "padj_LPS_vs_control", 2, 3),
+    x_mid   = (x_start + x_end) / 2,
+    label   = p_to_star(padj)
+  ) %>%
+  left_join(
+    rep_expr %>%
+      group_by(gene) %>%
+      summarise(
+        y_max = max(log2_TPM, na.rm = TRUE),
+        y_min = min(log2_TPM, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        y_range = pmax(y_max - y_min, 0.25),
+        y_base  = y_max + 0.10 * y_range
+      ),
+    by = "gene"
+  ) %>%
+  group_by(gene) %>%
+  arrange(comparison, .by_group = TRUE) %>%
+  mutate(
+    y      = y_base + (row_number() - 1) * 0.18 * y_range,
+    y_tick = y - 0.04 * y_range
+  ) %>%
+  ungroup()
+
+readr::write_csv(
+  deseq2_pvals,
+  file.path(out_dir, "S3B_representative_gene_DESeq2_padj.csv")
+)
+```
+
+```{r S3B-deseq2, fig.width=8.2, fig.height=5.2}
+p_rep_deseq2 <- ggplot(rep_expr, aes(x = group, y = log2_TPM, color = group)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, linewidth = 0.35, color = "grey25") +
+  geom_jitter(width = 0.08, size = 1.8, alpha = 0.95) +
+  geom_segment(
+    data = rep_sig_anno_deseq2,
+    aes(x = x_start, xend = x_end, y = y, yend = y),
+    inherit.aes = FALSE, linewidth = 0.35, color = "grey20"
+  ) +
+  geom_segment(
+    data = rep_sig_anno_deseq2,
+    aes(x = x_start, xend = x_start, y = y, yend = y_tick),
+    inherit.aes = FALSE, linewidth = 0.35, color = "grey20"
+  ) +
+  geom_segment(
+    data = rep_sig_anno_deseq2,
+    aes(x = x_end, xend = x_end, y = y, yend = y_tick),
+    inherit.aes = FALSE, linewidth = 0.35, color = "grey20"
+  ) +
+  geom_text(
+    data = rep_sig_anno_deseq2,
+    aes(x = x_mid, y = y + 0.04 * y_range, label = label),
+    inherit.aes = FALSE, size = 3.2, color = "grey10"
+  ) +
+  facet_wrap(~ gene, scales = "free_y", ncol = 4) +
+  scale_color_manual(values = group_colors) +
+  labs(
+    x     = NULL,
+    y     = "log2(TPM + 1)",
+    title = "Representative shared NF-kB targets (DESeq2 significance)"
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    legend.position  = "none",
+    axis.text.x      = element_blank(),
+    axis.ticks.x     = element_blank(),
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text       = element_text(face = "bold"),
+    plot.title       = element_text(hjust = 0.5, face = "bold")
+  )
+
+p_rep_deseq2
+
+ggsave(file.path(out_dir, "S3B_representative_shared_NFKB_targets_DESeq2.pdf"), p_rep_deseq2, width = 8.2, height = 5.2)
+ggsave(file.path(out_dir, "S3B_representative_shared_NFKB_targets_DESeq2.png"), p_rep_deseq2, width = 8.2, height = 5.2, dpi = 300)
+```
+
+# 11. Final Output Files
+
+```{r output-files}
+list.files(out_dir, full.names = FALSE)
+```
+
+# 12. Session Info
+
+```{r session-info}
+sessionInfo()
+```

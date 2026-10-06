@@ -1,0 +1,10 @@
+# Direct package versions observed in general_env; see docs/dependencies.md.
+# Resolve and validate this candidate environment before recording a final release lock.
+name: slc7a5-manuscript
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.16
+  - pip
+  - pip:
+      - -r requirements-python.txt

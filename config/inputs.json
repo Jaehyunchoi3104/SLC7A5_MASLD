@@ -1,0 +1,306 @@
+{
+  "scrna_monomac_seed": {
+    "path": "MASLD_collaboration/multiomics_analysis/scRNA_v1/scRNA_monoMAC_detail.h5ad",
+    "description": "Figure1 시작용 scRNA 세부 주석 객체",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scrna_monomac": {
+    "path": "02_SLC7A5_mono_Journal/03_Script/Journal_script/scRNA_monoMAC_detail.h5ad",
+    "description": "Figure1 저장 객체 / Figure3-2 입력",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scrna_mono_seed": {
+    "path": "MASLD_collaboration/multiomics_analysis/scRNA_v1/scRNA_adata_mono_cellannot.h5ad",
+    "description": "Figure2 시작용 단핵구 객체",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scrna_mono_final": {
+    "path": "02_SLC7A5_mono_Journal/01_Data/scRNA_adata_mono_cellannot_final.h5ad",
+    "description": "Figure2 최종 단핵구 객체",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scrna_raw": {
+    "path": "MASLD_collaboration/multiomics_analysis/scRNA_v1/scRNA_raw.h5ad",
+    "description": "CellPhoneDB 전체 raw counts",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "snrna_stage": {
+    "path": "50_Public_GEO_analysis/analysis/Data/Liver_DB_nuc_stage.h5ad",
+    "description": "질환 단계가 결합된 snRNA 객체",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "snrna_shared": {
+    "path": "external/MASLD_NUC_DB_total.h5ad",
+    "description": "Figure1_Nucseq의 외부 공유 snRNA 객체",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "external_reference"
+  },
+  "snrna_gse210077": {
+    "path": "50_Public_GEO_analysis/analysis/01_MergeNucseq/GSE210077_Raw.h5ad",
+    "description": "GSE210077에서 만든 원본 AnnData",
+    "generated": false,
+    "accession": "GSE210077",
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "pbmc_annotated": {
+    "path": "02_SLC7A5_mono_Journal/01_Data/PBMC_v2_annotation.h5ad",
+    "description": "PBMC 주석 객체",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "cpdb_database": {
+    "path": "external/cellphonedb/v5.0.0/cellphonedb.zip",
+    "description": "CellPhoneDB v5 데이터베이스",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "external_reference"
+  },
+  "scenic_adjacencies": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/pySCENIC/data/cell_mono_SCENIC.adjacencies.tsv",
+    "description": "pySCENIC adjacencies",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scenic_motifs": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/pySCENIC/data/cell_mono_SCENIC.motifs.csv",
+    "description": "pySCENIC motifs",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scenic_auc": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/pySCENIC/data/cell_mono_SCENIC.auc.csv",
+    "description": "pySCENIC auc",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scenic_tfs": {
+    "path": "external/pyscenic/reference/allTFs_hg38.txt",
+    "description": "pySCENIC 외부 참조: allTFs_hg38.txt",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "external_reference"
+  },
+  "scenic_rankings_10kb": {
+    "path": "external/pyscenic/reference/hg38_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+    "description": "pySCENIC 외부 참조: hg38_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "external_reference"
+  },
+  "scenic_rankings_500bp": {
+    "path": "external/pyscenic/reference/hg38_500bp_up_100bp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+    "description": "pySCENIC 외부 참조: hg38_500bp_up_100bp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "external_reference"
+  },
+  "scenic_annotations": {
+    "path": "external/pyscenic/reference/motifs-v9-nr.hgnc-m0.001-o0.0.tbl",
+    "description": "pySCENIC 외부 참조: motifs-v9-nr.hgnc-m0.001-o0.0.tbl",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "external_reference"
+  },
+  "bulk_counts": {
+    "path": "02_SLC7A5_mono_Journal/04_bulkRNAseq/salmon.merged.gene_counts_length_scaled.tsv",
+    "description": "Salmon length-scaled gene counts",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "bulk_tpm": {
+    "path": "02_SLC7A5_mono_Journal/04_bulkRNAseq/salmon.merged.gene_tpm.tsv",
+    "description": "Salmon gene TPM",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "bulk_additional_genes": {
+    "path": "02_SLC7A5_mono_Journal/04_bulkRNAseq/additional/genes.expression.xlsx",
+    "description": "추가 gene expression 입력",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "bulk_additional_transcripts": {
+    "path": "02_SLC7A5_mono_Journal/04_bulkRNAseq/additional/transcripts.expression.xlsx",
+    "description": "추가 transcript expression 입력",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "bulk_nosi_lps_deg": {
+    "path": "02_SLC7A5_mono_Journal/04_bulkRNAseq/DEG_siConLPS_vs_siCon_nosiCon1.csv",
+    "description": "siCon_1 제외 LPS DEG",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "bulk_nosi_kd_deg": {
+    "path": "02_SLC7A5_mono_Journal/04_bulkRNAseq/DEG_siSLCLPS5_vs_siConLPS_nosiCon1.csv",
+    "description": "siCon_1 제외 KD DEG",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scrna_myeloid_deg": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/Fig1E_SLC7A5_top20_bottom20_DEG_GSEA/DEG_Myeloid_SLC7A5_top20_high_vs_bottom20_low.csv",
+    "description": "Figure1 Myeloid 상/하위 20% DEG",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "scrna_myeloid_gsea": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/Fig1E_Myeloid_SLC7A5_top20_bottom20_GSEA/GSEA_Myeloid_focused_best_terms_for_pdf.csv",
+    "description": "선택적 NF-kB leading-edge 자료",
+    "generated": true,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hyu_metadata": {
+    "path": "03_bulkRNAseq/01_Data/HYU_bulk_meta.csv",
+    "description": "HYU 비식별 분석 metadata; 공개 범위 확인 필요",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hyu_fpkm": {
+    "path": "03_bulkRNAseq/01_Data/HYU_FPKM.xlsx",
+    "description": "HYU FPKM 입력; 접근 조건 확인 필요",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hyu_candidate_lps": {
+    "path": "03_bulkRNAseq/04_Script/DEG_siConLPS_vs_siCon.csv",
+    "description": "HYU 후보 선택에 실제 사용된 기존 LPS DEG",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hyu_candidate_kd": {
+    "path": "03_bulkRNAseq/04_Script/DEG_siSLCLPS5_vs_siConLPS.csv",
+    "description": "HYU 후보 선택에 실제 사용된 기존 KD DEG",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "monomac_marker_deg": {
+    "path": "02_SLC7A5_mono_Journal/05_Figure/monomacDEG/scRNA_monomac_monocluster_DEG.csv",
+    "description": "보조 marker 표 입력",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_liver_nuclei_counts": {
+    "path": "50_Public_GEO_analysis/HwangBJ/liver_nuclei_counts_matrix.rds",
+    "description": "HwangBJ liver_nuclei counts; donor IDs and Condition retained",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_liver_nuclei_metadata": {
+    "path": "50_Public_GEO_analysis/HwangBJ/liver_nuclei_metadata.rds",
+    "description": "HwangBJ liver_nuclei metadata; donor IDs and Condition retained",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_pbmc_counts": {
+    "path": "50_Public_GEO_analysis/HwangBJ/pbmc_counts_matrix.rds",
+    "description": "HwangBJ pbmc counts; donor IDs and Condition retained",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_pbmc_metadata": {
+    "path": "50_Public_GEO_analysis/HwangBJ/pbmc_metadata.rds",
+    "description": "HwangBJ pbmc metadata; donor IDs and Condition retained",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_reference_mono5": {
+    "path": "02_SLC7A5_mono_Journal/01_Data/scmono5_DEG.csv",
+    "description": "Primary scRNA SLC7A5-high vs rest reference DEG",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_reference_all": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/MASLD_mono_DEG_allclusters.csv",
+    "description": "Primary reference detection fractions and logFC cross-check",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_reference_classical": {
+    "path": "02_SLC7A5_mono_Journal/05_Figure/DEG_Special_monocyte_vs_Classical_monocyte.csv",
+    "description": "Secondary scRNA SLC7A5-high vs Classical reference DEG",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  },
+  "hwangbj_legacy_masl_myeloid": {
+    "path": "02_SLC7A5_mono_Journal/02_Analysis/HwangBJ/pbmc/harmony/MASL1_4_myeloid_reference_annotated.h5ad",
+    "description": "Optional historical MASL-only annotation for barcode correspondence",
+    "generated": false,
+    "accession": null,
+    "download_url": null,
+    "availability": "deposition_or_access_instructions_pending"
+  }
+}

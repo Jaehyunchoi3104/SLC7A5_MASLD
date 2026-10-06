@@ -1,0 +1,452 @@
+---
+title: "MASLD_nuc_MP"
+author: "Jaehyun Choi"
+date: "2025-01-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Seurat)
+library(MAST)
+library(dittoSeq)
+library(caret)
+library(ranger)
+library(feseR)
+library(devtools)
+library(pROC)
+library(reticulate)
+library(SingleR)
+library(slingshot)
+library(celldex)
+library(scCATCH)
+library(dplyr)
+```
+
+
+```{r cars}
+cord_nuc <- readRDS("~/MASLD_collaboration/analysis_notbook/Cord/MASLD_merged_0116_hm.rds")
+cord_nuc@meta.data$state <- ifelse(
+  startsWith(cord_nuc@meta.data$sample, "norm"), 
+  "Normal", 
+  "MASLD"
+)
+table(cord_nuc@meta.data$cluster)
+#  hepatocyte     Endothelia    T-cells&ILC     Mesenchyme             MP Cholangiocytes         B-cell 
+#    125027          14399           9498           9180           6304           5661            786 
+cord_mp <- subset(cord_nuc, subset = cluster == 'MP')
+
+cord_mp <- SetAssayData(cord_mp, layer = "scale.data", new.data = NULL, assay = "RNA")
+cord_mp <- ScaleData(cord_mp,  assay = "RNA")
+
+cord_mp <- RunPCA(cord_mp, npcs = 30, verbose = FALSE)
+print(cord_mp[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(cord_mp, dims = 1:2, reduction = "pca")
+DimPlot(cord_mp, reduction = "pca")
+
+# t-SNE
+cord_mp <- RunTSNE(cord_mp, reduction = "pca", dims = 1:20)
+# UMAP
+cord_mp <- RunUMAP(cord_mp,reduction = "pca",dims = 1:20) 
+  
+ dittoDimPlot(cord_mp, "state", reduction.use = "umap") 
+
+# harmony batch correction
+
+options(repr.plot.height = 5, repr.plot.width = 12)
+p1 <- DimPlot(object = cord_mp, reduction = "pca", pt.size = .1, group.by = "sample")
+p2 <- VlnPlot(object = cord_mp, features = "PC_1", group.by = "sample", pt.size = .1)
+plot_grid(p1,p2)
+
+mergedObj <- cord_mp
+mergedObj <- RunHarmony(cord_mp, group.by.vars = "sample")
+harmony_embeddings <- Embeddings(mergedObj, 'harmony')
+  harmony_embeddings[1:5, 1:5]
+  
+mergedObj <- mergedObj %>% 
+    RunUMAP(reduction = "harmony", dims = 1:20) %>% 
+    FindNeighbors(reduction = "harmony", dims = 1:20) %>% 
+#    FindClusters(resolution = 0.5) %>% 
+    identity()
+
+dittoDimPlot(mergedObj, "state", reduction.use = "umap")
+
+cord_mp <- mergedObj
+FeaturePlot(cord_mp, "SLC7A5")
+
+##Cell type classification using an integrated reference
+scRNA_Mp <- subset(Liver_scRNA, subset = cellannot == "MP")
+  Liver.anchors <- FindTransferAnchors(reference = scRNA_Mp , query = cord_mp,
+    dims = 1:30, reference.reduction = "pca")
+  predictions <- TransferData(anchorset = Liver.anchors, refdata = scRNA_Mp $cellannot_detail_MP_Endo_Mes,
+    dims = 1:30)
+  cord_mp <- AddMetaData(cord_mp, metadata = predictions)
+  dittoDimPlot(cord_mp, "predicted.id", reduction.use = "umap")
+
+```
+
+```{R}
+library(celldex)
+library(SingleR)
+DefaultAssay(cord_mp) <- "RNA"
+
+# Obtain the premade BlueprintEncode reference set which contains immune and hematopoietic cells
+  blueprint.encode <- BlueprintEncodeData()
+  monaco.ref <- celldex::MonacoImmuneData()
+  dice.ref <- celldex::DatabaseImmuneCellExpressionData()
+  ImmGenData.ref <- celldex::ImmGenData()
+  Novershtern.ref <- celldex::NovershternHematopoieticData()
+  HPCA.ref <- celldex::HumanPrimaryCellAtlasData()
+  
+#Run SingleR (HPCA)
+HPCA <- SingleR(test = as.SingleCellExperiment(cord_mp),
+                     ref = HPCA.ref,
+                     labels = HPCA.ref$label.fine)
+
+HPCA <- SingleR(test = as.SingleCellExperiment(cord_mp),
+                     ref = HPCA.ref,
+                     labels = HPCA.ref$label.main)
+                     
+                     
+# Grab labels, but change pruned NAs to character "NA"s
+cord_mp@meta.data$HPCA <- HPCA$labels
+dittoDimPlot(cord_mp, "HPCA",
+             reduction.use = "umap",
+             do.letter = FALSE,
+             cells.use = !is.na(HPCA$pruned.labels),
+             do.label = TRUE)
+
+
+```
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+df <- cord_mp@meta.data[, c("predicted.id", "state")]
+contingency_table <- table(df$state, df$predicted.id)
+states <- rownames(contingency_table)      # 배치 이름
+clusters <- colnames(contingency_table)
+results <- list()
+# 반복문: 모든 클러스터와 배치 쌍에 대해 Fisher's Test 수행
+for (cluster in clusters) {
+  for (i in 1:(length(states) - 1)) {
+    for (j in (i + 1):length(states)) {
+      batch1 <- states[i]
+      batch2 <- states[j]
+      
+      # 2x2 교차표 생성
+      table <- matrix(c(
+        contingency_table[batch1, cluster],  # batch1, cluster
+        contingency_table[batch2, cluster],  # batch2, cluster
+        sum(contingency_table[batch1, ]) - contingency_table[batch1, cluster],  # batch1, not cluster
+        sum(contingency_table[batch2, ]) - contingency_table[batch2, cluster]   # batch2, not cluster
+      ), nrow = 2, byrow = TRUE)
+      
+      # Fisher's Exact Test 수행
+      fisher_result <- fisher.test(table)
+      
+      # 결과 저장
+      results <- append(results, list(data.frame(
+        cluster = cluster,
+        batch1 = batch1,
+        batch2 = batch2,
+        odds_ratio = fisher_result$estimate,
+        p_value = fisher_result$p.value
+      )))
+    }
+  }
+}
+
+results_df <- do.call(rbind, results)
+
+# 결과 확인
+print(results_df)
+
+metadata <- cord_mp@meta.data
+cluster_fractions <- metadata %>%
+  group_by(state, predicted.id) %>%
+  summarise(cell_count = n()) %>%
+  group_by(state) %>%
+  mutate(fraction = cell_count / sum(cell_count))
+  
+# Stacked barplot
+ggplot(cluster_fractions, aes(x = state, y = fraction, fill = predicted.id)) +
+  geom_bar(stat = "identity", position = "fill") +  # 상태별 누적 막대그래프
+  scale_y_continuous(labels = scales::percent) +    # 비율(%)로 축 변환
+  labs(
+    title = "Cluster Fractions by State",
+    x = "State",
+    y = "Fraction (%)",
+    fill = "Cluster"
+  ) +
+  theme_minimal()
+  
+# 각 state 별 cluster 차이 확인 
+cluster_fractions <- metadata %>%
+  group_by(state, predicted.id) %>%
+  summarise(cell_count = n()) %>%
+  group_by(state) %>%
+  mutate(fraction = cell_count / sum(cell_count)) %>%
+  ungroup() %>%
+  mutate(state_cluster = paste(state, predicted.id, sep = "-"))  # 클러스터-상태 레이블
+cluster_fractions$predicted.id <- factor(cluster_fractions$predicted.id, levels = unique(cluster_fractions$predicted.id))
+cluster_fractions$state <- factor(cluster_fractions$state, levels = c("Normal", "MASLD"))
+
+# p value 값 *로 바꾸기
+results_df <- results_df %>%
+  mutate(significance = case_when(
+    p_value < 0.001 ~ "***",
+    p_value < 0.01  ~ "**",
+    p_value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+ 
+results_df$predicted.id<- results_df$cluster
+plot_data <- cluster_fractions %>%
+  left_join(results_df, by = "predicted.id")
+  
+ggplot(plot_data, aes(x = predicted.id, y = fraction, fill = state)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  scale_fill_manual(
+    values = c("Normal" = "#FF9AA2", "MASLD" = "#A8D5BA")
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  #ylim(0, 0.75) +  # y축의 최소값과 최대값 설정 (0에서 75%)
+  labs(
+    title = "Cluster Fractions by State and Cluster",
+    x = "Cluster(label_transfer)",
+    y = "Fraction of Endo cells",
+    fill = "State"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  # 유의미성 표시 추가
+  geom_text(
+    data = plot_data %>% filter(state == "MASLD"),  # MASLD 상태만 필터링
+    aes(x = predicted.id, y = 0.7, label = significance),
+    inherit.aes = FALSE,
+    color = "black"
+  )
+```
+
+```{r}
+
+# 유전자 발현값 추출
+SLC7A5_expr <- FetchData(cord_mp, vars = c("SLC7A5", "state"))
+
+# 그룹별 요약統計
+library(dplyr)
+SLC7A5_expr %>%
+  group_by(state) %>%
+  summarise(
+    mean_expression = mean(SLC7A5),
+    median_expression = median(SLC7A5),
+    sd_expression = sd(SLC7A5),
+    n = n()
+  )
+
+# 발현 기준 설정 (예: 0 이상이면 발현된 것으로 간주)
+SLC7A5_expr$expressed <- ifelse(SLC7A5_expr$SLC7A5 > 0, "Expressed", "Not Expressed")
+
+# 그룹별 발현 비율 계산
+prop_table <- SLC7A5_expr %>%
+  group_by(state, expressed) %>%
+  summarise(count = n()) %>%
+  group_by(state) %>%
+  mutate(proportion = count / sum(count))
+
+print(prop_table)
+
+ggplot(prop_table, aes(x = state, y = proportion, fill = expressed)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  labs(title = "Proportion of SLC7A5 expression in each state",
+       y = "Proportion", x = "State", fill = "Expression Status")
+
+t_test <- t.test(SLC7A5 ~ state, data = SLC7A5_expr)
+# p-value 저장
+p_val <- t_test$p.value
+# p-value를 문자열로 변환 (소수점 3자리까지만 표시)
+p_text <- paste0("p = ", formatC(p_val, format = "e", digits = 2))
+print(t_test)
+
+# ----------------------------------------------------------------------------------------
+
+# 유전자 발현값 추출
+SLC7A5_expr <- FetchData(cord_mp, vars = c("SLC7A5", "seurat_clusters"))
+
+# 그룹별 요약統計
+library(dplyr)
+SLC7A5_expr %>%
+  group_by(seurat_clusters) %>%
+  summarise(
+    mean_expression = mean(SLC7A5),
+    median_expression = median(SLC7A5),
+    sd_expression = sd(SLC7A5),
+    n = n()
+  )
+
+# 발현 기준 설정 (예: 0 이상이면 발현된 것으로 간주)
+SLC7A5_expr$expressed <- ifelse(SLC7A5_expr$SLC7A5 > 0, "Expressed", "Not Expressed")
+
+# 그룹별 발현 비율 계산
+prop_table <- SLC7A5_expr %>%
+  group_by(seurat_clusters, expressed) %>%
+  summarise(count = n()) %>%
+  group_by(seurat_clusters) %>%
+  mutate(proportion = count / sum(count))
+
+print(prop_table)
+
+ggplot(prop_table, aes(x = seurat_clusters, y = proportion, fill = expressed)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  labs(title = "Proportion of SLC7A5 expression in each seurat_clusters",
+       y = "Proportion", x = "seurat_clusters", fill = "Expression Status")
+
+t_test <- t.test(SLC7A5 ~ seurat_clusters, data = SLC7A5_expr)
+# p-value 저장
+p_val <- t_test$p.value
+# p-value를 문자열로 변환 (소수점 3자리까지만 표시)
+p_text <- paste0("p = ", formatC(p_val, format = "e", digits = 2))
+print(t_test)
+
+#---------------------------------------------------------------------------------------
+
+# 유전자 발현값 추출
+SLC7A5_expr <- FetchData(cord_mp, vars = c("SLC7A5", "cell_annot"))
+
+# 그룹별 요약統計
+library(dplyr)
+SLC7A5_expr %>%
+  group_by(cell_annot) %>%
+  summarise(
+    mean_expression = mean(SLC7A5),
+    median_expression = median(SLC7A5),
+    sd_expression = sd(SLC7A5),
+    n = n()
+  )
+
+# 발현 기준 설정 (예: 0 이상이면 발현된 것으로 간주)
+SLC7A5_expr$expressed <- ifelse(SLC7A5_expr$SLC7A5 > 0, "Expressed", "Not Expressed")
+
+# 그룹별 발현 비율 계산
+prop_table <- SLC7A5_expr %>%
+  group_by(cell_annot, expressed) %>%
+  summarise(count = n()) %>%
+  group_by(cell_annot) %>%
+  mutate(proportion = count / sum(count))
+
+print(prop_table)
+
+ggplot(prop_table, aes(x = cell_annot, y = proportion, fill = expressed)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  labs(title = "Proportion of SLC7A5 expression in each cell_annot",
+       y = "Proportion", x = "cell_annot", fill = "Expression Status")
+
+t_test <- t.test(SLC7A5 ~ cell_annot, data = SLC7A5_expr)
+# p-value 저장
+p_val <- t_test$p.value
+# p-value를 문자열로 변환 (소수점 3자리까지만 표시)
+p_text <- paste0("p = ", formatC(p_val, format = "e", digits = 2))
+print(t_test)
+```
+
+```{r}
+df <- cord_mp@meta.data[, c("seurat_clusters", "state")]
+contingency_table <- table(df$state, df$seurat_clusters)
+states <- rownames(contingency_table)      # 배치 이름
+clusters <- colnames(contingency_table)
+
+metadata <- cord_mp@meta.data
+cluster_fractions <- metadata %>%
+  group_by(state, seurat_clusters) %>%
+  summarise(cell_count = n()) %>%
+  group_by(state) %>%
+  mutate(fraction = cell_count / sum(cell_count))
+results <- list()
+# 반복문: 모든 클러스터와 배치 쌍에 대해 Fisher's Test 수행
+for (cluster in clusters) {
+  for (i in 1:(length(states) - 1)) {
+    for (j in (i + 1):length(states)) {
+      batch1 <- states[i]
+      batch2 <- states[j]
+      
+      # 2x2 교차표 생성
+      table <- matrix(c(
+        contingency_table[batch1, cluster],  # batch1, cluster
+        contingency_table[batch2, cluster],  # batch2, cluster
+        sum(contingency_table[batch1, ]) - contingency_table[batch1, cluster],  # batch1, not cluster
+        sum(contingency_table[batch2, ]) - contingency_table[batch2, cluster]   # batch2, not cluster
+      ), nrow = 2, byrow = TRUE)
+      
+      # Fisher's Exact Test 수행
+      fisher_result <- fisher.test(table)
+      
+      # 결과 저장
+      results <- append(results, list(data.frame(
+        cluster = cluster,
+        batch1 = batch1,
+        batch2 = batch2,
+        odds_ratio = fisher_result$estimate,
+        p_value = fisher_result$p.value
+      )))
+    }
+  }
+}
+results_df <- do.call(rbind, results)
+# 결과 확인
+print(results_df)
+
+# 각 state 별 cluster 차이 확인 
+metadata <- cord_mp@meta.data
+cluster_fractions <- metadata %>%
+  group_by(state, seurat_clusters) %>%
+  summarise(cell_count = n()) %>%
+  group_by(state) %>%
+  mutate(fraction = cell_count / sum(cell_count)) %>%
+  ungroup() %>%
+  mutate(state_cluster = paste(state, seurat_clusters, sep = "-"))  # 클러스터-상태 레이블
+cluster_fractions$seurat_clusters <- factor(cluster_fractions$seurat_clusters, levels = unique(cluster_fractions$seurat_clusters))
+cluster_fractions$state <- factor(cluster_fractions$state, levels = c("Normal", "MASLD"))
+
+# p value 값 *로 바꾸기
+results_df<- results_df %>%
+  mutate(significance = case_when(
+    p_value < 0.001 ~ "***",
+    p_value < 0.01  ~ "**",
+    p_value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+ 
+results_df$seurat_clusters<- results_df$cluster
+plot_data <- cluster_fractions %>%
+  left_join(results_df, by = "seurat_clusters")
+#plot_data$seurat_clusters <- factor(plot_data$seurat_clusters, levels = c("0", "1", "2", "3","4","5","6","7","8","9","10","11","12","13"))
+ggplot(plot_data, aes(x = seurat_clusters, y = fraction, fill = state)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  scale_fill_manual(
+    values = c("Normal" = "#FF9AA2", "MASLD" = "#A8D5BA")
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  #ylim(0, 0.75) +  # y축의 최소값과 최대값 설정 (0에서 75%)
+  labs(
+    title = "seurat_clusters by State and Cluster",
+    x = "seurat_clusters",
+    y = "Fraction of Endo cells",
+    fill = "State"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  # 유의미성 표시 추가
+  geom_text(
+    data = plot_data %>% filter(state == "MASLD"),  # MASLD 상태만 필터링
+    aes(x = seurat_clusters, y = 0.4, label = significance),
+    inherit.aes = FALSE,
+    color = "black"
+  )
+```

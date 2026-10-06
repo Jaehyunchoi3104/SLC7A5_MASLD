@@ -1,0 +1,58 @@
+---
+title: "MASLD_monoMAC_Cellchat"
+author: "Jaehyun Choi"
+date: "2025-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## anndata to Seurat
+
+```{r cars}
+library(Seurat)
+library(SeuratDisk)
+library(sceasy)
+library(reticulate)
+
+library(dplyr)
+library(readr)
+library(Seurat)
+library(dittoSeq)
+library(Seurat)
+library(SeuratDisk)
+library(sceasy)
+library(anndata)
+```
+
+```{r}
+setwd("~/MASLD_collaboration/multiomics_analysis/scRNA_v1")
+
+sceasy::convertFormat(
+  "scRNA_raw.h5ad",
+  from = "anndata",
+  to   = "seurat",
+  outFile = "scRNA_raw.rds"
+)
+MAS.big <- readRDS("scRNA_raw.rds")
+cluster_df <- read.csv("scRNA_monoMAC_detail_obs.csv", stringsAsFactors = FALSE)
+colnames(cluster_df)[1] <- "barcode"
+head(cluster_df$barcode)
+
+meta_df <- MAS.big@meta.data
+meta_df$barcode <- rownames(meta_df)
+merged_meta <- merge(meta_df, cluster_df, by = "barcode", all.x = TRUE)
+
+# 정렬 복원 (barcode 순서 Seurat 기준으로)
+merged_meta <- merged_meta[match(rownames(MAS.big@meta.data), merged_meta$barcode), ]
+
+# Seurat 객체에 적용
+MAS.big@meta.data$detail_cluster <- merged_meta$detail_cluster
+MAS.big@meta.data$celltype <- merged_meta$celltype
+
+saveRDS(MAS.big,file="MAS.big.rds")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -1,0 +1,281 @@
+---
+title: "Liver_siSLC7A5_bulkanalysis"
+author: "Jaehyun Choi"
+date: "2026-01-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Seurat)
+library(MAST)
+library(dittoSeq)
+library(caret)
+library(ranger)
+library(feseR)
+#  install.packages("devtools")
+library(devtools)
+#install_github("enriquea/feseR")
+library(feseR)
+library(pROC)
+library(reticulate)
+library(SingleR)
+library(slingshot)
+library(celldex)
+library(scCATCH)
+library(dplyr)
+library(DESeq2)
+library(tidyverse)
+```
+
+## Import Data
+
+```{r cars}
+setwd("~/Liver_bio_project/02_SLC7A5_mono_Journal/04_bulkRNAseq")
+counts <- read.table("salmon.merged.gene_counts.tsv", header=TRUE, row.names=1)
+head(counts)
+
+counts_mat <- counts[, -1]
+all(counts_mat == round(counts_mat))
+# Library size
+library_sizes <- colSums(counts_mat)
+
+library_df <- data.frame(
+  sample = names(library_sizes),
+  library_size = library_sizes
+)
+
+library_df
+
+barplot(
+  library_sizes / 1e6,
+  col="sienna",
+  las = 2,
+  ylab = "Library size (Millions of reads)",
+  main = "Library size per sample"
+)
+
+# Batch split
+sample_info <- data.frame(
+  sample = colnames(counts_mat),
+  group = case_when(
+    grepl("^siCon_[0-9]", colnames(counts_mat)) ~ "siCon",
+    grepl("^siCon_LPS", colnames(counts_mat)) ~ "siCon_LPS",
+    grepl("^siSLC_LPS5", colnames(counts_mat)) ~ "siSLC_LPS5",
+    TRUE ~ NA_character_
+  )
+)
+table(sample_info$group)
+
+library_df <- library_df %>%
+  left_join(sample_info, by = "sample")
+
+boxplot(
+  library_size / 1e6 ~ group,
+  col="sienna",
+  data = library_df,
+  ylab = "Library size (Millions)",
+  main = "Library size by group"
+)
+
+# PCA plot
+gene_tpm <- read.table(
+  "salmon.merged.gene_tpm.tsv",
+  header = TRUE,
+  row.names = 1,
+  check.names = FALSE
+)
+
+gene_tpm_mat <- gene_tpm[, -1]
+
+log_tpm <- log2(gene_tpm_mat + 1)
+
+gene_var <- apply(log_tpm, 1, var)
+
+log_tpm_var <- log_tpm[gene_var > 0, ]
+
+pca <- prcomp(t(log_tpm_var), scale. = TRUE)
+plot(
+  pca$x[,1],
+  pca$x[,2],
+  col = as.factor(sample_info$group),
+  pch = 19,
+  xlab = "PC1",
+  ylab = "PC2"
+)
+legend(
+  "topleft",
+  legend = levels(as.factor(sample_info$group)),
+  col = 1:length(unique(sample_info$group)),
+  pch = 19
+)
+```
+
+## DESeq2 dds analysis
+raw fastq file 부재로 힘듦..
+
+```{r}
+library(tximport)
+
+
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_mat,
+  colData   = sample_info,
+  design    = ~ group
+)
+```
+
+## TPM analysis
+
+```{r}
+tpm <- read.table(
+  "salmon.merged.gene_tpm.tsv",
+  header = TRUE,
+  row.names = 1,
+  check.names = FALSE
+)
+tpm_mat <- tpm[, -1]
+log_tpm <- log2(tpm_mat + 1)
+
+sample_info <- data.frame(
+  sample = colnames(log_tpm),
+  group = case_when(
+    grepl("^siCon_[0-9]", colnames(log_tpm)) ~ "siCon",
+    grepl("^siCon_LPS", colnames(log_tpm)) ~ "siCon_LPS",
+    grepl("^siSLC_LPS5", colnames(log_tpm)) ~ "siSLC_LPS5",
+    TRUE ~ NA_character_
+  )
+)
+
+sample_info$group <- factor(sample_info$group)
+rownames(sample_info) <- sample_info$sample
+
+gene_var <- apply(log_tpm, 1, var)
+log_tpm_var <- log_tpm[gene_var > 0, ]
+
+# PCA analysis
+pca <- prcomp(t(log_tpm_var), scale. = TRUE)
+
+plot(
+  pca$x[,1], pca$x[,2],
+  col = sample_info$group,
+  pch = 19,
+  xlab = "PC1",
+  ylab = "PC2",
+  main = "PCA (log2 TPM)"
+)
+
+legend(
+  "topleft",
+  legend = levels(sample_info$group),
+  col = 1:length(levels(sample_info$group)),
+  pch = 19
+)
+
+# Heatmap
+gene_var <- apply(log_tpm, 1, var)
+
+top_genes <- names(sort(gene_var, decreasing = TRUE))[1:500]
+
+heatmap_mat <- log_tpm[top_genes, ]
+
+library(pheatmap)
+
+annotation_col <- data.frame(group = sample_info$group)
+rownames(annotation_col) <- rownames(sample_info)
+
+pheatmap(
+  heatmap_mat,
+  scale = "row",
+  annotation_col = annotation_col,
+  show_rownames = FALSE,
+  clustering_distance_rows = "correlation",
+  clustering_distance_cols = "correlation",
+  dendrogram = FALSE
+)
+
+# siCon_LPS vs siCon
+group_means <- data.frame(
+  siCon = rowMeans(log_tpm[, sample_info$group == "siCon"]),
+  siCon_LPS = rowMeans(log_tpm[, sample_info$group == "siCon_LPS"])
+)
+
+ranking <- group_means$siCon_LPS - group_means$siCon
+names(ranking) <- rownames(group_means)
+
+ranking <- sort(ranking, decreasing = TRUE)
+
+library(clusterProfiler)
+library(msigdbr)
+
+msig <- msigdbr(
+  species = "Homo sapiens",
+  category = "H"
+)
+
+gsea_res <- GSEA(
+  ranking,
+  TERM2GENE = msig[, c("gs_name", "gene_symbol")],
+  pvalueCutoff = 0.05
+)
+
+dotplot(gsea_res, showCategory = 20)
+
+ridgeplot(gsea_res)
+
+gseaplot(
+  gsea_res,
+  geneSetID = gsea_res@result$ID[1]
+)
+
+library(GSVA)
+
+gene_sets <- split(msig$gene_symbol, msig$gs_name)
+
+gsva_res <- gsva(
+  as.matrix(log_tpm),
+  gene_sets,
+  method = "gsva"
+)
+
+pheatmap(
+  gsva_res[1:30, ],
+  annotation_col = annotation_col,
+  scale = "row"
+)
+
+# TPM gene specific analysis
+log_tpm["SLC7A5", ]
+
+tapply(
+  as.numeric(log_tpm["SLC7A5", ]),
+  sample_info$group,
+  mean
+)
+
+boxplot(
+  as.numeric(log_tpm["SLC7A5", ]) ~ sample_info$group,
+  ylab = "log2(TPM + 1)",
+  main = "SLC7A5 expression"
+)
+
+expr  <- as.numeric(log_tpm["SLC7A5", ])
+group <- sample_info$group
+
+boxplot(
+  expr ~ group,
+  ylab = "log2(TPM + 1)",
+  main = "SLC7A5 expression",
+  outline = FALSE
+)
+
+# 각 샘플 점 추가 (jitter)
+stripchart(
+  expr ~ group,
+  vertical = TRUE,
+  method = "jitter",
+  pch = 16,
+  col = "red",
+  add = TRUE
+)
+
+```

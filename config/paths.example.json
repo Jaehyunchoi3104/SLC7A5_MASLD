@@ -1,0 +1,8 @@
+{
+  "data_root": "/path/to/Liver_bio_project_or_downloaded_data",
+  "seed": 42,
+  "input_overrides": {
+    "cpdb_database": "/path/to/cellphonedb_v5/cellphonedb.zip",
+    "snrna_shared": "/path/to/MASLD_NUC_DB_total.h5ad"
+  }
+}

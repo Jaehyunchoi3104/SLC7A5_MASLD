@@ -1,0 +1,136 @@
+---
+title: "Liver_HYU_bulkanalysis"
+author: "Jaehyun Choi"
+date: "2025-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Seurat)
+library(MAST)
+library(dittoSeq)
+library(caret)
+library(ranger)
+library(feseR)
+#  install.packages("devtools")
+library(devtools)
+#install_github("enriquea/feseR")
+library(feseR)
+library(pROC)
+library(reticulate)
+library(SingleR)
+library(slingshot)
+library(celldex)
+library(scCATCH)
+library(dplyr)
+library(DESeq2)
+library(tidyverse)
+```
+
+## Import Data
+
+
+```{r cars}
+setwd("~/Liver_bio_project/03_bulkRNAseq/01_Data")
+# raw count matrix (genes x samples)
+counts <- read.csv("HYU_raw.csv", row.names = 1, check.names = FALSE)
+# metadata (samples x attributes)
+metadata <- read.csv("HYU_bulk_meta.csv", row.names = 1)
+
+metadata <- metadata[metadata$Sample %in% colnames(counts), ]
+rownames(metadata) <- metadata$Sample 
+all(colnames(counts) == rownames(metadata)) 
+
+head(counts[, 1:5])
+head(metadata)
+
+```
+
+## DESeqDataset
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+metadata$Disease <- as.factor(metadata$Disease)
+metadata$batch <- metadata$기관코드.1..강북삼성.2..동탄성심.3..강북삼성.4..한양대.5..계명의대.6..고려대
+metadata$batch
+metadata$batch <- as.factor(metadata$batch)
+metadata$Disease <- as.factor(metadata$Disease)
+metadata$Steatosis <- as.factor(metadata$Steatosis)
+
+dds <- DESeqDataSetFromMatrix(
+  countData = counts,
+  colData = metadata,
+  design = ~ Disease
+)
+
+dds <- DESeqDataSetFromMatrix(
+  countData = counts,
+  colData = metadata,
+  design = ~ batch + Disease
+)
+
+dds <- DESeq(dds)
+res12 <- results(dds, contrast = c("Disease", "2", "1"))
+res23 <- results(dds, contrast = c("Disease", "3", "2"))
+res13 <- results(dds, contrast = c("Disease", "3", "1"))
+
+vsd <- vst(dds, blind = FALSE)
+pcaData <- plotPCA(vsd, intgroup = c("batch", "Disease","Steatosis","Inflammation","Balloning","NAS_score","Gender","Age"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+ggplot(pcaData, aes(PC1, PC2, color = Disease, shape = batch)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  theme_bw()
+
+boxplot(log10(colSums(counts)), main="Library sizes (log10)")
+
+summary(res12)
+res12_ordered <- res12[order(res12$padj), ]
+head(res12_ordered)
+```
+
+```{r}
+dds <- DESeq(dds)
+res12 <- results(dds, contrast = c("Disease", "2", "1"))
+res23 <- results(dds, contrast = c("Disease", "3", "2"))
+res13 <- results(dds, contrast = c("Disease", "3", "1"))
+
+res <- results(dds, contrast = c("Disease", "2", "1"))
+res <- lfcShrink(dds, coef="Disease_2_vs_1", type="apeglm")
+res_ordered <- res[order(res$padj), ]
+topgenes <- head(order(resOrdered$padj), 50)
+
+ann_col <- metadata[, c("batch", "Disease", "Steatosis")]
+metadata$Disease <- factor(metadata$Disease, levels = c("1", "2", "3"))
+ordered_samples <- rownames(metadata[order(metadata$Disease), ])
+expr_mat <- assay(vsd)[topgenes, ordered_samples]
+ann_colors <- list(
+  batch = setNames(brewer.pal(length(unique(ann_col$batch)), "Set3"), unique(ann_col$batch)),
+  Disease = setNames(brewer.pal(length(unique(ann_col$Disease)), "Set1"), unique(ann_col$Disease)),
+  stage = setNames(brewer.pal(length(unique(ann_col$stage)), "Pastel1"), unique(ann_col$stage))
+)
+heat_colors <- colorRampPalette(rev(brewer.pal(11, "RdBu")))(100)
+library(pheatmap)
+
+pheatmap(assay(vsd)[topgenes, ],
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_rownames = FALSE,
+         annotation_col = ann_col,
+         scale = "row")
+
+library(EnhancedVolcano)
+EnhancedVolcano(res12_ordered,
+                lab = rownames(res12_ordered),
+                x = 'log2FoldChange',
+                y = 'padj',
+                title = 'MASLD vs Healthy')
+
+plotMA(resOrdered, ylim = c(-5, 5))
+
+
+```

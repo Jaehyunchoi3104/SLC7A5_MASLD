@@ -1,0 +1,140 @@
+{
+  "adjustText": [
+    "figure3_regulons"
+  ],
+  "anndata": [
+    "pbmc",
+    "hwangbj"
+  ],
+  "cellphonedb": [
+    "figure3_cellphone"
+  ],
+  "celltypist": [
+    "pbmc"
+  ],
+  "gseapy": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_regulons",
+    "nucseq_gsea"
+  ],
+  "h5py": [
+    "input_checks"
+  ],
+  "igraph": [
+    "scanpy_clustering"
+  ],
+  "ipykernel": [
+    "notebook_runtime"
+  ],
+  "ipython": [
+    "figure1_nucseq",
+    "pbmc",
+    "hwangbj"
+  ],
+  "jupyterlab": [
+    "notebook_runtime"
+  ],
+  "ktplotspy": [
+    "figure3_cellphone"
+  ],
+  "leidenalg": [
+    "scanpy_clustering"
+  ],
+  "loompy": [
+    "figure3_regulons"
+  ],
+  "matplotlib": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_cellphone",
+    "figure3_regulons",
+    "figure3_signaling",
+    "nucseq_gsea",
+    "pbmc",
+    "suppl_figure2",
+    "hwangbj"
+  ],
+  "nbconvert": [
+    "notebook_runtime"
+  ],
+  "nbformat": [
+    "source_checks"
+  ],
+  "networkx": [
+    "figure3_regulons"
+  ],
+  "numpy": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_regulons",
+    "nucseq_gsea",
+    "pbmc",
+    "hwangbj"
+  ],
+  "openpyxl": [
+    "monomac_table"
+  ],
+  "pandas": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_cellphone",
+    "figure3_regulons",
+    "figure3_signaling",
+    "monomac_table",
+    "nucseq_gsea",
+    "pbmc",
+    "hwangbj"
+  ],
+  "requests": [
+    "figure2",
+    "figure3_signaling"
+  ],
+  "scanpy": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_cellphone",
+    "figure3_regulons",
+    "figure3_signaling",
+    "nucseq_gsea",
+    "pbmc",
+    "suppl_figure2",
+    "hwangbj"
+  ],
+  "scipy": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_regulons",
+    "figure3_signaling",
+    "pbmc",
+    "hwangbj"
+  ],
+  "seaborn": [
+    "figure1",
+    "figure1_nucseq",
+    "figure2",
+    "figure3_cellphone",
+    "figure3_regulons",
+    "figure3_signaling",
+    "hwangbj"
+  ],
+  "statsmodels": [
+    "figure1",
+    "figure1_nucseq",
+    "figure3_regulons",
+    "pbmc",
+    "figure2"
+  ],
+  "harmonypy": [
+    "hwangbj"
+  ],
+  "scikit-learn": [
+    "hwangbj"
+  ]
+}

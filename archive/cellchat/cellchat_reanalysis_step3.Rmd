@@ -1,0 +1,513 @@
+---
+title: "cellchat_reanalysis_step 3"
+output: html_document
+date: "2025-05-12"
+---
+
+step 1 : 데이터 integration 먼저 진행 Endo4 in liver tissue & Platelet, Monocyte 3종류 in PBMC
+
+step 2 : cellchat object 생성 (truncatedMean 15)
+
+step 3 : comparison analysis
+
+## Comparison analysis of multiple datasets using CellChat
+
+Load the required libraries
+```{r}
+#ptm = Sys.time()
+library(CellChat)
+package.version("CellChat")
+library(Seurat)
+Rlibrary(patchwork)
+library(ggplot2)
+# reticulate::use_python("/Users/suoqinjin/anaconda3/bin/python", required=T) 
+```
+
+```{r}
+# LSEC_Platelet_Monocyte
+cellchat_H <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_Platelet_Monocyte/cellchat_H_truncatedMean_15_without_Normal1~4.rds")
+cellchat_N <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_Platelet_Monocyte/cellchat_N_truncatedMean_15_without_Normal1~4.rds")
+# LSEC_Mes_all_MP_Hep_Chol
+cellchat_H <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_Mes_all_MP_Hep_Chol/cellchat_H_truncatedMean_15_without_Normal1~4.rds")
+cellchat_N <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_Mes_all_MP_Hep_Chol/cellchat_N_truncatedMean_15_without_Normal1~4.rds")
+# LSEC_PBMC
+cellchat_H <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_PBMC/cellchat_H_truncatedMean_15_without_Normal1~4.rds")
+cellchat_N <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_PBMC/cellchat_N_truncatedMean_15_without_Normal1~4.rds")
+# LSEC_PBMC_population.size=true
+cellchat_H <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_PBMC/cellchat_H_truncatedMean_15_without_Normal1~4_populationT.rds")
+cellchat_N <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_PBMC/cellchat_N_truncatedMean_15_without_Normal1~4_populationT.rds")
+# LSEC_PBMC(trim=10)
+cellchat_H <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_PBMC/cellchat_H_truncatedMean_10_without_Normal1~4_populationT.rds")
+cellchat_N <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/data/LSEC_PBMC/cellchat_N_truncatedMean_10_without_Normal1~4_populationT.rds")
+# LSEC_PBMC(trim=15, version 2.2.0)
+cellchat_H <- readRDS(file = "/home/seongjunlee/seongjunlee/pipeline_scRNA_seq/data/Rds/LSEC_PBMC/v2.2.0/cellchat_H_truncatedMean_15_without_Normal1~4.rds")
+cellchat_N <- readRDS(file = "/home/seongjunlee/seongjunlee/pipeline_scRNA_seq/data/Rds/LSEC_PBMC/v2.2.0/cellchat_N_truncatedMean_15_without_Normal1~4.rds")
+# LSEC_Mes_all_MP_Hep_Chol_PBMC
+cellchat_H <- readRDS(file = "/home/seongjunlee/seongjunlee/pipeline_scRNA_seq/data/Rds/LSEC_Mes_all_MP_Hep_Chol_PBMC/v2.2.0/cellchat_H_truncatedMean_15_without_Normal1~4.rds")
+cellchat_N <- readRDS(file = "/home/seongjunlee/seongjunlee/pipeline_scRNA_seq/data/Rds/LSEC_Mes_all_MP_Hep_Chol_PBMC/v2.2.0/cellchat_N_truncatedMean_15_without_Normal1~4.rds")
+```
+
+Load CellChat object of each dataset and merge them together
+```{r}
+#plan("sequential")  # 병렬 처리 끔 (순차 실행)
+# Compute the network centrality scores
+cellchat_H <- netAnalysis_computeCentrality(cellchat_H, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+cellchat_N <- netAnalysis_computeCentrality(cellchat_N, slot.name = "netP")
+
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(cellchat_N, width = 8, height = 2.5, font.size = 10)
+
+object.list <- list(H = cellchat_H, M = cellchat_N)
+cellchat_HN <- mergeCellChat(object.list, add.names = names(object.list))
+cellchat_HN
+
+# Users can now export the merged CellChat object and the list of the two separate objects for later use
+#save(object.list, file = "/home/sbblab/Seongjun/pipeline_singlecell/Rscript/including_MP_Endo_sub/cellchat/cellchat_object.list_PBMC&TISSUE_HN.RData")
+#save(cellchat, file = "/home/sbblab/Seongjun/pipeline_singlecell/Rscript/including_MP_Endo_sub/cellchat/cellchat_HN.RData")
+```
+
+Part I: Identify altered interactions and cell populations
+
+Compare the total number of interactions and interaction strength
+```{r}
+gg1 <- compareInteractions(cellchat_HN, show.legend = F, group = c(1,2))
+gg2 <- compareInteractions(cellchat_HN, show.legend = F, group = c(1,2), measure = "weight")
+gg1 + gg2
+
+combined_plot <- gg2
+
+# PDF로 저장
+ggsave(
+  filename = "compareInteraction_strength_bargraph.pdf",  # 원하는 경로로 수정 가능
+  plot = combined_plot,
+  width = 3,       # 가로 크기 (단위: 인치)
+  height = 6,      # 세로 크기
+  units = "in"      # 단위
+)
+
+```
+
+(A) Circle plot showing differential number of interactions or interaction strength among different cell populations across two datasets
+```{r}
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat_HN, weight.scale = T)
+netVisual_diffInteraction(cellchat_HN, weight.scale = T, measure = "weight")
+```
+(B) Heatmap showing differential number of interactions or interaction strength among different cell populations across two datasets
+```{r}
+gg1 <- netVisual_heatmap(cellchat_HN)
+#> Do heatmap based on a merged object
+gg2 <- netVisual_heatmap(cellchat_HN, measure = "weight")
+#> Do heatmap based on a merged object
+gg1 + gg2
+
+```
+(C) Circle plot showing the number of interactions or interaction strength among different cell populations across multiple datasets
+```{r}
+weight.max <- getMaxWeight(object.list, attribute = c("idents","count"))
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(object.list)) {
+  netVisual_circle(object.list[[i]]@net$count, weight.scale = T, label.edge= F, edge.weight.max = weight.max[2], edge.width.max = 12, title.name = paste0("Number of interactions - ", names(object.list)[i]))
+}
+```
+(D) Circle plot showing the differential number of interactions or interaction strength among coarse cell types
+```{r}
+group.cellType <- c(rep("Platelet", 4), rep("Endo4", 4), rep("Endo2", 4))
+group.cellType <- factor(group.cellType, levels = c("Platelet", "Endo4", "Endo2"))
+object.list <- lapply(object.list, function(x) {mergeInteractions(x, group.cellType)})
+cellchat_LT_sub <- mergeCellChat(object.list, add.names = names(object.list))
+
+weight.max <- getMaxWeight(object.list, slot.name = c("idents", "net", "net"), attribute = c("idents","count", "count.merged"))
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(object.list)) {
+  netVisual_circle(object.list[[i]]@net$count.merged, weight.scale = T, label.edge= T, edge.weight.max = weight.max[3], edge.width.max = 12, title.name = paste0("Number of interactions - ", names(object.list)[i]))
+}
+
+# Differential analysis
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat_LT_sub, weight.scale = T, measure = "count.merged", label.edge = T)
+netVisual_diffInteraction(cellchat_LT_sub, weight.scale = T, measure = "weight.merged", label.edge = T)
+```
+
+Compare the major sources and targets in a 2D space
+
+(A) Identify cell populations with significant changes in sending or receiving signals
+```{r}
+num.link <- sapply(object.list, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax)
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg)
+```
+
+```{r}
+gg1 <- netAnalysis_signalingChanges_scatter(cellchat_HN, idents.use = "Inflam. DC", signaling.exclude = "MIF")
+#> Visualizing differential outgoing and incoming signaling changes from NL to LS
+#> The following `from` values were not present in `x`: 0
+#> The following `from` values were not present in `x`: 0, -1
+gg2 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "cDC1", signaling.exclude = c("MIF"))
+#> Visualizing differential outgoing and incoming signaling changes from NL to LS
+#> The following `from` values were not present in `x`: 0, 2
+#> The following `from` values were not present in `x`: 0, -1
+patchwork::wrap_plots(plots = list(gg1,gg2))
+```
+
+Part II: Identify altered signaling with distinct network architecture and interaction strength
+
+Identify signaling groups based on their functional similarity
+```{r}
+#reticulate::py_install(packages ='umap-learn')
+#library(reticulate)
+cellchat_HN <- computeNetSimilarityPairwise(cellchat_HN, type = "functional")
+#> Compute signaling network similarity for datasets 1 2
+cellchat_HN <- netEmbedding(cellchat_HN, type = "functional")
+#> Manifold learning of the signaling networks for datasets 1 2
+cellchat_HN <- netClustering(cellchat_HN, type = "functional", do.parallel = FALSE)
+#> Classification learning of the signaling networks for datasets 1 2
+# Visualization in 2D-space
+netVisual_embeddingPairwise(cellchat_HN, type = "functional", label.size = 3.5)
+#> 2D visualization of signaling networks from datasets 1 2
+```
+
+Identify signaling groups based on structure similarity
+```{r}
+cellchat_HN <- computeNetSimilarityPairwise(cellchat_HN, type = "structural")
+cellchat_HN <- netEmbedding(cellchat_HN, type = "structural")
+cellchat_HN <- netClustering(cellchat_HN, type = "structural")
+# Visualization in 2D-space
+netVisual_embeddingPairwise(cellchat_HN, type = "structural", label.size = 3.5)
+netVisual_embeddingPairwiseZoomIn(cellchat_HN, type = "structural", nCol = 2)
+```
+
+Compute and visualize the pathway distance in the learned joint manifold
+```{r}
+rankSimilarity(cellchat_HN, type = "functional")
+#> Compute the distance of signaling networks between datasets 1 2
+```
+Identify altered signaling with distinct interaction strength
+
+(A) Compare the overall information flow of each signaling pathway or ligand-receptor pair
+```{r}
+gg1 <- rankNet(cellchat_HN, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = T, do.stat = TRUE)
+gg2 <- rankNet(cellchat_HN, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = F, do.stat = TRUE)
+
+gg1 + gg2
+```
+
+(B) Compare outgoing (or incoming) signaling patterns associated with each cell population
+```{r}
+library(ComplexHeatmap)
+#> Loading required package: grid
+#> ========================================
+#> ComplexHeatmap version 2.15.4
+#> Bioconductor page: http://bioconductor.org/packages/ComplexHeatmap/
+#> Github page: https://github.com/jokergoo/ComplexHeatmap
+#> Documentation: http://jokergoo.github.io/ComplexHeatmap-reference
+#> 
+#> If you use it in published research, please cite either one:
+#> - Gu, Z. Complex Heatmap Visualization. iMeta 2022.
+#> - Gu, Z. Complex heatmaps reveal patterns and correlations in multidimensional 
+#>     genomic data. Bioinformatics 2016.
+#> 
+#> 
+#> The new InteractiveComplexHeatmap package can directly export static 
+#> complex heatmaps into an interactive Shiny app with zero effort. Have a try!
+#> 
+#> This message can be suppressed by:
+#>   suppressPackageStartupMessages(library(ComplexHeatmap))
+#> ========================================
+i = 1
+# combining all the identified signaling pathways from different datasets 
+
+#outgoing
+pathway.union <- union(object.list[[i]]@netP$pathways, object.list[[i+1]]@netP$pathways)
+ht1 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[i], width = 8, height = 13)
+ht2 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "outgoing", signaling = pathway.union, title = names(object.list)[i+1], width = 8, height = 13)
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+
+#incoming
+ht1 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "incoming", signaling = pathway.union, title = names(object.list)[i], width = 8, height = 13, color.heatmap = "GnBu")
+ht2 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "incoming", signaling = pathway.union, title = names(object.list)[i+1], width = 8, height = 13, color.heatmap = "GnBu")
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+
+#all
+ht1 = netAnalysis_signalingRole_heatmap(object.list[[i]], pattern = "all", signaling = pathway.union, title = names(object.list)[i], width = 5, height = 14, color.heatmap = "OrRd")
+ht2 = netAnalysis_signalingRole_heatmap(object.list[[i+1]], pattern = "all", signaling = pathway.union, title = names(object.list)[i+1], width = 5, height = 14, color.heatmap = "OrRd")
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+```
+Part III: Identify the up-regulated and down-regulated signaling ligand-receptor pairs
+
+Identify dysfunctional signaling by comparing the communication probabities
+```{r}
+unique(cellchat_HN@meta$cellannot_detail)
+netVisual_bubble(cellchat_HN, sources.use = "Platelet", targets.use = c(0:17),  comparison = c(1, 2), angle.x = 90)
+netVisual_bubble(cellchat_HN, sources.use = "Monocyte CD14+ CD16+", targets.use = c(0:17),  comparison = c(1, 2), angle.x = 90)
+netVisual_bubble(cellchat_HN, sources.use = "Monocyte CD16+", targets.use = c(0:17),  comparison = c(1, 2), angle.x = 90)
+netVisual_bubble(cellchat_HN, sources.use = "Monocyte CD14+", targets.use = c(0:17),  comparison = c(1, 2), angle.x = 90)
+netVisual_bubble(cellchat_HN, sources.use = "Endo4", targets.use = c(0:17),  comparison = c(1, 2), angle.x = 90)
+# incoming signaling
+netVisual_bubble(cellchat_HN, sources.use = c(0:17), targets.use = "Endo4",  comparison = c(1, 2), angle.x = 90)
+
+#> Comparing communications on a merged object
+```
+
+```{r}
+cellchat_HN@meta
+unique(cellchat_HN@meta$cellannot_detail)
+gg1 <- netVisual_bubble(cellchat_HN, sources.use = c("Monocyte CD14+ CD16+","Monocyte CD14+","Monocyte CD16+"), targets.use = "Endo4",  comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in MASLD", angle.x = 90, remove.isolate = T)
+#> Comparing communications on a merged object
+gg2 <- netVisual_bubble(cellchat_HN, sources.use = c("Monocyte CD14+ CD16+","Monocyte CD14+","Monocyte CD16+"), targets.use = "Endo4",  comparison = c(1, 2), max.dataset = 1, title.name = "Decreased signaling in MASLD", angle.x = 90, remove.isolate = T)
+#> Comparing communications on a merged object
+gg1 + gg2
+
+gg1 <- netVisual_bubble(cellchat_HN, sources.use = "Endo4", targets.use = c("Monocyte CD14+ CD16+","Monocyte CD14+","Monocyte CD16+"),  comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in MASLD", angle.x = 90, remove.isolate = T)
+#> Comparing communications on a merged object
+gg2 <- netVisual_bubble(cellchat_HN, sources.use = "Endo4", targets.use = c("Monocyte CD14+ CD16+","Monocyte CD14+","Monocyte CD16+"),  comparison = c(1, 2), max.dataset = 1, title.name = "Decreased signaling in MASLD", angle.x = 90, remove.isolate = T)
+#> Comparing communications on a merged object
+gg1 + gg2
+
+```
+Identify dysfunctional signaling by using differential expression analysis
+The above method for identifying the upgulated and down-regulated signaling is perfomed by comparing the communication probability between two datasets for each L-R pair and each pair of cell groups. Alternative, we can identify the upgulated and down-regulated signaling ligand-receptor pairs based on the differential gene expression analysis. Specifically, we perform differential expression analysis between two biological conditions (i.e., NL and LS) for each cell group, and then obtain the upgulated and down-regulated signaling based on the fold change of ligands in the sender cells and receptors in the receiver cells. Such analysis can be done as follows.
+```{r}
+# define a positive dataset, i.e., the dataset with positive fold change against the other dataset
+pos.dataset = "M"
+# define a char name used for storing the results of differential expression analysis
+features.name = pos.dataset
+# perform differential expression analysis
+cellchat_HN <- identifyOverExpressedGenes(cellchat_HN, group.dataset = "datasets", pos.dataset = pos.dataset, features.name = features.name, only.pos = FALSE, thresh.pc = 0.1, thresh.fc = 0.2, thresh.p = 0.05) # group.dataset에 Healthy와 NAFLD가 있음. pos.dataset은 NAFLD로 설정, only.pos : positive markers만 리턴, thresh.pc : Threshold of the percent of cells expressed in one cluster(특정 클러스터 내에서 유전자가 적어도 10%의 세포에서 발현되어야 이 유전자가 해당 클러스터와 관련이 있다고 간주), thresh.fc : Threshold of Log Fold Change, thresh.p : Threshold of p-values
+#> Use the joint cell labels from the merged CellChat object
+# map the results of differential expression analysis onto the inferred cell-cell communications to easily manage/subset the ligand-receptor pairs of interest
+net <- netMappingDEG(cellchat_HN, features.name = features.name)
+# extract the ligand-receptor pairs with upregulated ligands in NAFLD
+net.up <- subsetCommunication(cellchat_HN, datasets = "M", net = net,ligand.logFC = 0.2, receptor.logFC = 0.2)
+# extract the ligand-receptor pairs with upregulated ligands and upregulated recetptors in Healthy, i.e.,downregulated in NAFLD
+net.down <- subsetCommunication(cellchat_HN, datasets = "H", net = net,ligand.logFC = -0.2, receptor.logFC = -0.2)
+```
+
+```{r}
+gene.up <- extractGeneSubsetFromPair(net.up, cellchat_HN)
+gene.down <- extractGeneSubsetFromPair(net.down, cellchat_HN)
+```
+Users can also find all the significant outgoing/incoming/both signaling according to the customized features and cell groups of interest
+```{r}
+df <- findEnrichedSignaling(object.list[[2]], features = c("CCL19", "CXCL12"), idents = c("Inflam. FIB", "COL11A1+ FIB"), pattern ="outgoing")
+```
+
+Visualize the identified up-regulated and down-regulated signaling ligand-receptor pairs
+(A) Bubble plot
+```{r}
+pairLR.use.up = net.up[, "interaction_name", drop = F]
+gg1 <- netVisual_bubble(cellchat_HN, pairLR.use = pairLR.use.up, sources.use = "Endo4", targets.use = c("Monocyte CD14+ CD16+","Monocyte CD14+","Monocyte CD16+"), comparison = c(1, 2),  angle.x = 90, remove.isolate = FALSE,title.name = paste0("Up-regulated signaling in ", names(object.list)[2]),max.dataset=2)
+#> Comparing communications on a merged object
+pairLR.use.down = net.down[, "interaction_name", drop = F]
+gg2 <- netVisual_bubble(cellchat_HN, pairLR.use = pairLR.use.down, sources.use = "Endo4", targets.use = c("Monocyte CD14+ CD16+","Monocyte CD14+","Monocyte CD16+"), comparison = c(1, 2),  angle.x = 90, remove.isolate = FALSE,title.name = paste0("Down-regulated signaling in ", names(object.list)[2]),max.dataset=1)
+#> Comparing communications on a merged object
+gg1 + gg2
+
+combined_plot <- gg1 + gg2
+
+# PDF로 저장
+ggsave(
+  filename = "bubble_plot_combined_outgoing.pdf",  # 원하는 경로로 수정 가능
+  plot = combined_plot,
+  width = 15,       # 가로 크기 (단위: 인치)
+  height = 8,      # 세로 크기
+  units = "in"      # 단위
+)
+
+```
+
+```{r}
+pairLR.use.up = net.up[, "interaction_name", drop = F]
+gg1 <- netVisual_bubble(cellchat_HN, pairLR.use = pairLR.use.up, sources.use = c("Dendritic cell","Monocyte CD14+","Monocyte CD14+ CD16+","Monocyte CD16+"), targets.use = "Endo4", comparison = c(1, 2),  angle.x = 90, remove.isolate = FALSE,title.name = paste0("Up-regulated signaling in ", names(object.list)[2]),max.dataset=2)
+#> Comparing communications on a merged object
+pairLR.use.down = net.down[, "interaction_name", drop = F]
+gg2 <- netVisual_bubble(cellchat_HN, pairLR.use = pairLR.use.down, sources.use = c("Dendritic cell","Monocyte CD14+","Monocyte CD14+ CD16+","Monocyte CD16+"), targets.use = "Endo4", comparison = c(1, 2),  angle.x = 90, remove.isolate = FALSE,title.name = paste0("Down-regulated signaling in ", names(object.list)[2]),max.dataset=1)
+#> Comparing communications on a merged object
+gg1 + gg2
+
+combined_plot <- gg1 + gg2
+
+# PDF로 저장
+ggsave(
+  filename = "bubble_plot_combined_incoming.pdf",  # 원하는 경로로 수정 가능
+  plot = combined_plot,
+  width = 15,       # 가로 크기 (단위: 인치)
+  height = 8,      # 세로 크기
+  units = "in"      # 단위
+)
+
+
+```
+
+
+Part V: Compare the signaling gene expression distribution between different datasets
+```{r}
+cellchat_HN@meta$datasets = factor(cellchat_HN@meta$datasets, levels = c("H", "N")) # set factor level
+plotGeneExpression(cellchat_HN, signaling = "IL16", split.by = "datasets", colors.ggplot = T, type = "violin")
+
+#save(cellchat_HN, file = "/home/sbblab/Seongjun/pipeline_singlecell/Rscript/including_MP_Endo_sub/cellchat/cellchat_HN.rds")
+
+#> The legacy packages maptools, rgdal, and rgeos, underpinning the sp package,
+#> which was just loaded, were retired in October 2023.
+#> Please refer to R-spatial evolution reports for details, especially
+#> https://r-spatial.org/r/2023/05/15/evolution4.html.
+#> It may be desirable to make the sf package available;
+#> package maintainers should consider adding sf to Suggests:.
+#> The default behaviour of split.by has changed.
+#> Separate violin plots are now plotted side-by-side.
+#> To restore the old behaviour of a single split violin,
+#> set split.plot = TRUE.
+#>       
+#> This message will be shown once per session.
+#> Scale for y is already present.
+#> Adding another scale for y, which will replace the existing scale.
+#> Scale for y is already present.
+#> Adding another scale for y, which will replace the existing scale.
+#> Scale for y is already present.
+#> Adding another scale for y, which will replace the existing scale.
+```
+##위 Platelet -> MP2에서 유의했던 signaling들에 대해 달라지는 유전자 리스트
+## Differential gene analysis
+```{r}
+# from prof.Jeong
+################DE analysis를 통해 얻은 유의한 gene lists###########
+# find DE genes between NAFLD/healthy (Platelet)
+  library(dplyr)
+# Liver와 Tissue data를 merge한 data
+  merged_LT_sub <- readRDS(file = "/home/sbblab/Seongjun/pipeline_singlecell/Rscript/merged_LT_sub.rds")
+  merged_LT_sub2 <- merged_LT_sub
+  merged_LT_sub2@meta.data
+  LT_Platelet@meta.data
+  LT_Platelet <- subset(merged_LT_sub2, subset = cellannot_detail %in%  "Platelet")
+
+  DefaultAssay(LT_Platelet) <- "RNA"
+  Idents(LT_Platelet) <- "disease"
+  #Platelet 기준으로 N/H에서 logfc가 설정값 이상인 gene들을 뽑아냄
+  DE_Platelet_Tissue <- FindMarkers(LT_Platelet, ident.1 = 'NAFLD',ident.2 = 'healthy', min.pct = 0.1, logfc.threshold = 0.15) #idents2=NULL or 작성하지 않으면 Platelet을 제외한 나머지 type들 선택됨.
+  #length(rownames(DE_Platelet_Tissue))
+  DE_Platelet_Tissue
+  ##Annotate EntrezID
+  mergedObj_matrix <- GetAssayData(object = LT_Platelet, slot = "counts")
+  df <- as.data.frame(as.matrix(rownames(mergedObj_matrix)))
+  df$EntrezID <- NA
+  colnames(df) <- c('Symbol', 'EntrezID')
+  require('biomaRt') #library()와 비슷한 역할을 가짐
+  mart <- useMart('ENSEMBL_MART_ENSEMBL') #bioMart에서 ENSEMBL_MART_ENSEMBL을 사용
+  mart <- useDataset('hsapiens_gene_ensembl', mart) #hsapiens_gene_ensembl 이용
+  annotLookup <- getBM(
+    mart = mart,
+    attributes = c(
+    'hgnc_symbol',
+    'entrezgene_id'), #hgnc_symbol과 entrezgene_id 두 가지 속성 가져옴
+  uniqueRows = TRUE) #uniqueRows는 논리값 : 중복된 행을 제거
+#HGNC : HGNC에서 할당된 각 유전자는 고유한 HGNC 기호를 가지며 이는 해당 유전자를 식별하는 데 사용
+#Entrez Gene ID : NCBI(National Center for Biotechnology Information)에서 제공하는 유전자의 고유한 식별자
+  annotLookup
+  for (i in 1:nrow(df)){
+    if(sum(annotLookup[,1]==df[i,1])>0){
+      df[i,2] <- annotLookup[which(annotLookup[,1]==df[i,1])[1],2]
+      cat(paste0(i, ' '))
+    }
+  }
+  
+  DE_Platelet_Tissue$EntrezID <- 0
+  DE_Platelet_Tissue$Symbol <- rownames(DE_Platelet_Tissue)
+  DE_Platelet_Tissue$Index <- 0
+  for (i in 1:nrow(DE_Platelet_Tissue)){
+    DE_Platelet_Tissue[i,6] <- df[df[,1]==DE_Platelet_Tissue[i,7],2]
+    DE_Platelet_Tissue[i,8] <- which(df[,1]==DE_Platelet_Tissue[i,7])
+  }
+  #write.table(DE_Platelet_Tissue, file = "/Users/jeong/Documents/new_contract_HY_IBB/Collaboration/Liver/Integration_Nature_2019/Analysis/DE_MP_NAFLD_healthy/DE_Platelet_Tissue.txt", row.names = TRUE, col.names = TRUE, sep = "\t", quote = FALSE)
+  #write.table(as.matrix(rownames(mergedObj)), file = "/Users/jeong/Documents/new_contract_HY_IBB/Collaboration/Liver/Integration_Nature_2019/Analysis/DE_MP_NAFLD_healthy/genename_all.txt", row.names = TRUE, col.names = TRUE, sep = "\t", quote = FALSE)
+  all.genes <- rownames(LT_Platelet)
+  LT_Platelet <- ScaleData(LT_Platelet, features = all.genes)
+  DEG <- DE_Platelet_Tissue[DE_Platelet_Tissue$p_val_adj<0.05 & abs(DE_Platelet_Tissue$avg_log2FC)>0.25,]
+pdf_heatmap <- DoHeatmap(LT_Platelet, features = rownames(DEG)) + NoLegend()
+DE_Platelet_Tissue$avg_log2FC
+ggplot2::ggsave(filename = "/home/sbblab/Seongjun/pipeline_singlecell/Rscript/including_MP_Endo_sub/cellchat/png_heatmap.png", plot = pdf_heatmap) 
+  
+  #mergedObj_matrix_norm <- GetAssayData(object = LT_Platelet, slot = "data")
+  #mergedObj_matrix_scale <- GetAssayData(object = LT_Platelet, slot = "scale.data")
+  #DE_Platelet_Tissue <- DE_Platelet_Tissue[order(DE_Platelet_Tissue$Index),]
+
+  DE_Platelet_Tissue$DEG <- 0
+  DE_Platelet_Tissue[DE_Platelet_Tissue$p_val_adj<0.05 & DE_Platelet_Tissue$avg_log2FC>0.58,9] <- 'Up'
+  DE_Platelet_Tissue[DE_Platelet_Tissue$p_val_adj<0.05 & DE_Platelet_Tissue$avg_log2FC<(-0.58),9] <- 'Down'
+  #DoHeatmap(LT_Platelet, features = c(DE_Platelet_Tissue[DE_Platelet_Tissue$DEG=='Up',]$Symbol,DE_Platelet_Tissue[DE_Platelet_Tissue$DEG=='Down',]$Symbol)) + NoLegend()
+  #https://bioconductor.org/packages/devel/bioc/vignettes/EnhancedVolcano/inst/doc/EnhancedVolcano.html
+  
+  #volcano plot
+  library(EnhancedVolcano)
+  EnhancedVolcano(DE_Platelet_Tissue,
+    lab = rownames(DE_Platelet_Tissue),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    selectLab = DE_Platelet_Tissue$Symbol,
+    max.overlaps = 10,
+    pCutoff = 0.05,
+    FCcutoff = 0.58,
+    labSize = 3.0,
+    drawConnectors = TRUE,
+    #xlim = c(-1.5, 1.5)
+  ) #+ coord_flip()
+  
+
+##DE analysis의 gene list와 interaction analysis의 gene list
+DE_UP <- DE_Platelet_Tissue[DE_Platelet_Tissue$DEG == 'Up',]
+DE_UP
+DE_UP <- cbind(rownames(DE_UP), DE_UP) # 엑셀에 rownames(유전자목록)를 추가하기 위한 코드
+
+DE_DOWN <- DE_Platelet_Tissue[DE_Platelet_Tissue$DEG == 'Down',]
+DE_DOWN
+DE_DOWN <- cbind(rownames(DE_DOWN), DE_DOWN) # 엑셀에 rownames(유전자목록)를 추가하기 위한 코드
+
+##엑셀 저장
+#library(openxlsx)
+#write.xlsx(as.data.frame(DE_UP),file="/home/sbblab/Seongjun/pipeline_singlecell/Rscript/DE_analysis/result_DE_Up.xlsx", rownames = TRUE)
+#write.xlsx(as.data.frame(DE_DOWN),file="/home/sbblab/Seongjun/pipeline_singlecell/Rscript/DE_analysis/result_DE_Down.xlsx", rownames = TRUE)
+
+DE_up_list <- rownames(DE_Platelet_Tissue)[DE_Platelet_Tissue$DEG == 'Up']
+DE_up_list
+DE_down_list <-  rownames(DE_Platelet_Tissue)[DE_Platelet_Tissue$DEG == 'Down']
+DE_down_list
+
+DE_list <- rownames(DEG)#DE_list전체
+DE_list
+
+interaction_up_list <- c("TNFSF4","TGFB1","PF4V1","PF4","PDGFA","NAMPT","GZMA","CCL5","CCL4","ANXA1")
+interaction_up_list
+
+interaction_down_list <- c("TGFB1","MIF","GZMA","CCL5","ANXA1")
+interaction_down_list
+
+intersect_up_list <- intersect(DE_up_list, interaction_up_list)
+intersect_up_list
+
+intersect_down_list <- intersect(DE_down_list, interaction_down_list)
+intersect_down_list
+
+I_DE_Platelet_Tissue <- DE_Platelet_Tissue[c("PF4","NAMPT"),]
+I_DE_Platelet_Tissue
+
+```
+
+```{r}
+#install.packages("openxlsx")
+library(openxlsx)
+Normal_subdata <- data.frame(cellchat_H@net$weight)
+MASLD_subdata <- data.frame(cellchat_N@net$weight)
+Normal_subdata_count <- data.frame(cellchat_H@net$count)
+MASLD_subdata_count <- data.frame(cellchat_N@net$count)
+# save weight
+write.xlsx(Normal_subdata, file = "Healthy_subdata_without_Normal1~4.xlsx",rowNames = TRUE)
+write.xlsx(MASLD_subdata, file = "NAFLD_subdata_without_Normal1~4.xlsx",rowNames = TRUE)
+# save count
+write.xlsx(Normal_subdata_count, file = "Healthy_subdata_count_without_Normal1~4.xlsx",rowNames = TRUE)
+write.xlsx(MASLD_subdata_count, file = "NAFLD_subdata_count_without_Normal1~4.xlsx",rowNames = TRUE)
+```

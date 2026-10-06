@@ -1,0 +1,1343 @@
+---
+title: "Bulk RNA-seq DESeq2 Analysis — siSLC7A5 (Liver, siCon_1 excluded)"
+author: "Jaehyun Choi"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r repository-setup, include=FALSE}
+.slc_start <- Sys.getenv("SLC7A5_REPO_ROOT", unset = getwd())
+.slc_repo <- normalizePath(.slc_start, mustWork = TRUE)
+while (!file.exists(file.path(.slc_repo, "R", "paths.R"))) {
+  .slc_parent <- dirname(.slc_repo)
+  if (identical(.slc_parent, .slc_repo)) stop("Start inside the repository or set SLC7A5_REPO_ROOT.")
+  .slc_repo <- .slc_parent
+}
+source(file.path(.slc_repo, "R", "paths.R"))
+slc_setup("bulk_nosi")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 6
+)
+```
+
+---
+
+# 1. Library
+
+```{r libraries}
+library(DESeq2)
+library(tidyverse)
+library(pheatmap)
+library(RColorBrewer)
+library(ggplot2)
+library(ggrepel)
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+
+# ensembldb 등 다른 패키지와의 namespace 충돌 방지
+filter  <- dplyr::filter
+select  <- dplyr::select
+arrange <- dplyr::arrange
+```
+
+---
+
+# 2. Data Import
+
+```{r import}
+knitr::opts_knit$set(root.dir = slc_output_dir("02_SLC7A5_mono_Journal/04_bulkRNAseq"))
+setwd(slc_output_dir("02_SLC7A5_mono_Journal/04_bulkRNAseq"))
+
+# salmon length-scaled counts 사용 (DESeq2 권장)
+raw <- read.table(
+  slc_input("bulk_counts"),
+  header    = TRUE,
+  row.names = 1,
+  sep       = "\t",
+  check.names = FALSE
+)
+
+# gene_name 컬럼 제거 → 숫자 matrix
+counts_mat <- raw[, -1]
+
+# siCon_1 샘플 제거
+counts_mat <- counts_mat[, colnames(counts_mat) != "siCon_1"]
+
+# salmon 비정수 카운트 → 반올림
+counts_mat <- round(counts_mat)
+
+cat("Dimensions:", nrow(counts_mat), "genes x", ncol(counts_mat), "samples\n")
+head(counts_mat)
+```
+
+---
+
+# 3. Sample Metadata
+
+```{r metadata}
+sample_info <- slc_sample_info(colnames(counts_mat))
+
+# Reference level: siCon
+sample_info$group <- factor(sample_info$group,
+                            levels = c("siCon", "siCon_LPS", "siSLC_LPS5"))
+
+print(sample_info)
+table(sample_info$group)
+```
+
+---
+
+# 4. QC — Library Size
+
+```{r qc_libsize}
+lib_df <- data.frame(
+  sample       = colnames(counts_mat),
+  library_size = colSums(counts_mat),
+  group        = sample_info$group
+)
+
+ggplot(lib_df, aes(x = reorder(sample, library_size), y = library_size / 1e6, fill = group)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set1") +
+  labs(title = "Library Size per Sample",
+       x = "Sample", y = "Library size (Millions)") +
+  theme_bw()
+```
+
+---
+
+# 5. DESeq2 Dataset Construction
+
+```{r deseq2_construct}
+# Low-count gene pre-filtering (rowSum >= 10)
+keep <- rowSums(counts_mat) >= 10
+counts_filt <- counts_mat[keep, ]
+cat("Genes after pre-filtering:", nrow(counts_filt), "\n")
+
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_filt,
+  colData   = sample_info,
+  design    = ~ group
+)
+
+# DESeq2 실행
+dds <- DESeq(dds)
+dds
+```
+
+---
+
+# 6. VST Normalization & PCA
+
+```{r vst_pca}
+vst <- vst(dds, blind = TRUE)
+
+# PCA
+pca_data <- plotPCA(vst, intgroup = "group", returnData = TRUE)
+pct_var  <- round(100 * attr(pca_data, "percentVar"))
+
+ggplot(pca_data, aes(x = PC1, y = PC2, color = group, label = name)) +
+  geom_point(size = 4) +
+  geom_text_repel(size = 3) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "PCA — VST normalized",
+    x = paste0("PC1: ", pct_var[1], "% variance"),
+    y = paste0("PC2: ", pct_var[2], "% variance")
+  ) +
+  theme_bw()
+```
+
+---
+
+# 7. Sample Distance Heatmap
+
+```{r sample_dist}
+vst_mat  <- assay(vst)
+samp_dist <- dist(t(vst_mat))
+samp_mat  <- as.matrix(samp_dist)
+
+ann_col <- data.frame(group = sample_info$group)
+rownames(ann_col) <- rownames(sample_info)
+
+pheatmap(
+  samp_mat,
+  clustering_distance_rows = samp_dist,
+  clustering_distance_cols = samp_dist,
+  annotation_col = ann_col,
+  col = colorRampPalette(rev(brewer.pal(9, "Blues")))(255),
+  main = "Sample-to-Sample Distance (VST)"
+)
+```
+
+---
+
+# 8. DEG Analysis
+
+## 8-1. Helper function
+
+```{r deg_helper}
+get_results <- function(dds, contrast, alpha = 0.05) {
+  res <- results(dds,
+                 contrast  = contrast,
+                 alpha     = alpha,
+                 pAdjustMethod = "BH")
+  res_df <- as.data.frame(res) %>%
+    rownames_to_column("gene") %>%
+    arrange(padj) %>%
+    filter(!is.na(padj))
+  return(res_df)
+}
+```
+
+---
+
+## 8-2. Comparison 1: siCon_LPS vs siCon (LPS effect)
+
+```{r comp1}
+res_LPS <- get_results(dds, contrast = c("group", "siCon_LPS", "siCon"))
+
+cat("[siCon_LPS vs siCon]\n")
+cat("  UP  (padj<0.05, log2FC>1):", sum(res_LPS$padj < 0.05 & res_LPS$log2FoldChange >  0.58, na.rm=TRUE), "\n")
+cat("  DOWN(padj<0.05, log2FC<-1):", sum(res_LPS$padj < 0.05 & res_LPS$log2FoldChange < -0.58, na.rm=TRUE), "\n")
+
+head(res_LPS, 10)
+write.csv(res_LPS, "DEG_siConLPS_vs_siCon_nosiCon1.csv", row.names = FALSE)
+```
+
+### Volcano plot
+
+```{r volcano_comp1, fig.width=9, fig.height=7}
+EnhancedVolcano(
+  res_LPS,
+  lab            = res_LPS$gene,
+  x              = "log2FoldChange",
+  y              = "padj",
+  pCutoff        = 0.05,
+  FCcutoff       = 1,
+  title          = "siCon_LPS vs siCon",
+  subtitle       = "LPS effect",
+  legendPosition = "right",
+  drawConnectors = TRUE
+)
+```
+
+### MA plot
+
+```{r ma_comp1}
+DESeq2::plotMA(results(dds, contrast = c("group", "siCon_LPS", "siCon")),
+               alpha = 0.05, main = "MA plot: siCon_LPS vs siCon")
+```
+
+---
+
+## 8-3. Comparison 2: siSLC_LPS5 vs siCon_LPS (SLC7A5 KD effect under LPS)
+
+```{r comp2}
+res_KD <- get_results(dds, contrast = c("group", "siSLC_LPS5", "siCon_LPS"))
+
+cat("[siSLC_LPS5 vs siCon_LPS]\n")
+cat("  UP  (padj<0.05, log2FC>1):", sum(res_KD$padj < 0.05 & res_KD$log2FoldChange >  0.58, na.rm=TRUE), "\n")
+cat("  DOWN(padj<0.05, log2FC<-1):", sum(res_KD$padj < 0.05 & res_KD$log2FoldChange < -0.58, na.rm=TRUE), "\n")
+
+head(res_KD, 10)
+write.csv(res_KD, "DEG_siSLCLPS5_vs_siConLPS_nosiCon1.csv", row.names = FALSE)
+```
+
+### Volcano plot
+
+```{r volcano_comp2, fig.width=9, fig.height=7}
+EnhancedVolcano(
+  res_KD,
+  lab            = res_KD$gene,
+  x              = "log2FoldChange",
+  y              = "padj",
+  pCutoff        = 0.05,
+  FCcutoff       = 0.58,
+  title          = "siSLC_LPS5 vs siCon_LPS",
+  subtitle       = "SLC7A5 KD effect (LPS background)",
+  legendPosition = "right",
+  drawConnectors = TRUE
+)
+```
+
+### MA plot
+
+```{r ma_comp2}
+DESeq2::plotMA(results(dds, contrast = c("group", "siSLC_LPS5", "siCon_LPS")),
+               alpha = 0.05, main = "MA plot: siSLC_LPS5 vs siCon_LPS")
+```
+
+---
+
+## 8-4. Comparison 3: siSLC_LPS5 vs siCon (overall effect)
+
+```{r comp3}
+res_overall <- get_results(dds, contrast = c("group", "siSLC_LPS5", "siCon"))
+
+cat("[siSLC_LPS5 vs siCon]\n")
+cat("  UP  (padj<0.05, log2FC>1):", sum(res_overall$padj < 0.05 & res_overall$log2FoldChange >  0.58, na.rm=TRUE), "\n")
+cat("  DOWN(padj<0.05, log2FC<-1):", sum(res_overall$padj < 0.05 & res_overall$log2FoldChange < -0.58, na.rm=TRUE), "\n")
+
+head(res_overall, 10)
+write.csv(res_overall, "DEG_siSLCLPS5_vs_siCon_nosiCon1.csv", row.names = FALSE)
+```
+
+### Volcano plot
+
+```{r volcano_comp3, fig.width=9, fig.height=7}
+EnhancedVolcano(
+  res_overall,
+  lab            = res_overall$gene,
+  x              = "log2FoldChange",
+  y              = "padj",
+  pCutoff        = 0.05,
+  FCcutoff       = 0.58,
+  title          = "siSLC_LPS5 vs siCon",
+  subtitle       = "Overall SLC7A5 KD + LPS effect",
+  legendPosition = "right",
+  drawConnectors = TRUE
+)
+```
+
+---
+
+# 9. Top DEG Heatmap
+
+```{r deg_heatmap, fig.width=10, fig.height=8}
+# 각 비교에서 유의미한 DEG 통합 (padj<0.05, |log2FC|>1)
+sig_genes <- unique(c(
+  res_LPS     %>% filter(padj < 0.05, abs(log2FoldChange) > 0.58) %>% pull(gene),
+  res_KD      %>% filter(padj < 0.05, abs(log2FoldChange) > 0.58) %>% pull(gene),
+  res_overall %>% filter(padj < 0.05, abs(log2FoldChange) > 0.58) %>% pull(gene)
+))
+
+cat("Total significant DEGs (union):", length(sig_genes), "\n")
+
+# VST matrix에서 해당 유전자만 추출
+vst_sig <- vst_mat[rownames(vst_mat) %in% sig_genes, ]
+
+# 최대 100개 유전자 (variance 기준)
+if (nrow(vst_sig) > 100) {
+  gene_var <- apply(vst_sig, 1, var)
+  vst_sig  <- vst_sig[order(gene_var, decreasing = TRUE)[1:100], ]
+}
+
+ann_col <- data.frame(group = sample_info$group)
+rownames(ann_col) <- rownames(sample_info)
+
+group_colors <- list(group = c(
+  siCon      = "#4393C3",
+  siCon_LPS  = "#D6604D",
+  siSLC_LPS5 = "#74C476"
+))
+
+pheatmap(
+  vst_sig,
+  scale              = "row",
+  annotation_col     = ann_col,
+  annotation_colors  = group_colors,
+  show_rownames      = nrow(vst_sig) <= 50,
+  clustering_method  = "ward.D2",
+  color              = colorRampPalette(c("#2166AC", "white", "#B2182B"))(200),
+  main               = paste0("Top DEG Heatmap (n=", nrow(vst_sig), ")")
+)
+```
+
+---
+
+# 10. SLC7A5 Expression
+
+```{r slc7a5_expr}
+knitr::opts_knit$set(root.dir = slc_output_dir("02_SLC7A5_mono_Journal/04_bulkRNAseq"))
+setwd(slc_output_dir("02_SLC7A5_mono_Journal/04_bulkRNAseq"))
+
+tpm_raw <- read.table(
+  slc_input("bulk_tpm"),
+  header = TRUE, row.names = 1, sep = "\t", check.names = FALSE
+)
+tpm_mat <- tpm_raw[, -1]
+
+# siCon_1 샘플 제거
+tpm_mat <- tpm_mat[, colnames(tpm_mat) != "siCon_1"]
+
+log_tpm <- log2(tpm_mat + 1)
+
+if ("SLC7A5" %in% rownames(log_tpm)) {
+  expr_df <- data.frame(
+    sample = colnames(log_tpm),
+    expr   = as.numeric(log_tpm["SLC7A5", ]),
+    group  = sample_info$group
+  )
+
+  pairwise_comparisons <- tibble::tribble(
+    ~group1,       ~group2,
+    "siCon",       "siCon_LPS",
+    "siCon_LPS",   "siSLC_LPS5",
+    "siCon",       "siSLC_LPS5"
+  ) %>%
+    dplyr::filter(group1 %in% levels(expr_df$group),
+                  group2 %in% levels(expr_df$group))
+
+  stat_df <- purrr::pmap_dfr(pairwise_comparisons, function(group1, group2) {
+    test_df <- expr_df %>%
+      dplyr::filter(group %in% c(group1, group2)) %>%
+      dplyr::mutate(group = droplevels(group))
+
+    p_value <- tryCatch(
+      t.test(expr ~ group, data = test_df)$p.value,
+      error = function(e) NA_real_
+    )
+
+    tibble::tibble(group1 = group1, group2 = group2, p_value = p_value)
+  }) %>%
+    dplyr::mutate(
+      p_adj = p.adjust(p_value, method = "BH"),
+      label = dplyr::case_when(
+        is.na(p_adj) ~ "NA",
+        p_adj < 0.001 ~ "***",
+        p_adj < 0.01  ~ "**",
+        p_adj < 0.05  ~ "*",
+        TRUE ~ "ns"
+      )
+    )
+
+  y_range <- diff(range(expr_df$expr, na.rm = TRUE))
+  y_step <- ifelse(y_range == 0, 0.2, y_range * 0.12)
+  y_base <- max(expr_df$expr, na.rm = TRUE)
+  group_levels <- levels(expr_df$group)
+
+  stat_df <- stat_df %>%
+    dplyr::mutate(
+      x1 = match(group1, group_levels),
+      x2 = match(group2, group_levels),
+      y = y_base + dplyr::row_number() * y_step,
+      y_text = y + y_step * 0.18
+    )
+
+  p <- ggplot(expr_df, aes(x = group, y = expr, fill = group)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    geom_jitter(width = 0.15, size = 3, color = "black") +
+    scale_fill_brewer(palette = "Set1") +
+    labs(title = "SLC7A5 Expression",
+         y = "log2(TPM + 1)", x = "") +
+    theme_bw() +
+    theme(legend.position = "none")
+
+  if (nrow(stat_df) > 0) {
+    p <- p +
+      geom_segment(data = stat_df,
+                   aes(x = x1, xend = x2, y = y, yend = y),
+                   inherit.aes = FALSE) +
+      geom_segment(data = stat_df,
+                   aes(x = x1, xend = x1, y = y - y_step * 0.12, yend = y),
+                   inherit.aes = FALSE) +
+      geom_segment(data = stat_df,
+                   aes(x = x2, xend = x2, y = y - y_step * 0.12, yend = y),
+                   inherit.aes = FALSE) +
+      geom_text(data = stat_df,
+                aes(x = (x1 + x2) / 2, y = y_text, label = label),
+                inherit.aes = FALSE, size = 5) +
+      expand_limits(y = max(stat_df$y_text, na.rm = TRUE) + y_step * 0.3)
+
+    print(stat_df %>% dplyr::select(group1, group2, p_value, p_adj, label))
+  }
+
+  p
+} else {
+  cat("SLC7A5 not found in TPM matrix\n")
+}
+```
+
+---
+
+# 11. GSEA — Hallmark Gene Sets (siSLC_LPS5 vs siCon_LPS)
+
+```{r gsea, fig.width=10, fig.height=7}
+# Ranked gene list (log2FC 기준)
+ranking <- res_KD %>%
+  filter(!is.na(log2FoldChange)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  { setNames(.$log2FoldChange, .$gene) }
+
+# MSigDB Hallmark
+msig_h <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+gsea_res <- GSEA(
+  geneList    = ranking,
+  TERM2GENE   = msig_h,
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  verbose     = FALSE
+)
+
+if (nrow(gsea_res@result) > 0) {
+  dotplot(gsea_res, showCategory = 20, title = "GSEA Hallmark: siSLC_LPS5 vs siCon_LPS") +
+    theme(axis.text.y = element_text(size = 9))
+} else {
+  cat("No significant GSEA results (padj < 0.05)\n")
+}
+```
+
+```{r gsea_ridge, fig.width=10, fig.height=7}
+if (nrow(gsea_res@result) > 0) {
+  ridgeplot(gsea_res, showCategory = 15) +
+    labs(title = "GSEA Ridgeplot: siSLC_LPS5 vs siCon_LPS")
+}
+```
+
+---
+
+# 12. GSEA — KEGG Metabolic Pathways (siCon_LPS vs siCon)
+
+LPS 처리가 4개의 대사 경로를 활성화하는지 확인합니다.
+랭킹은 `res_LPS` (siCon_LPS vs siCon) log2FoldChange 기준입니다.
+
+## 12-1. Gene Set 준비 & GSEA 실행
+
+```{r gsea_lps_kegg_run}
+# siCon_LPS vs siCon ranked list
+ranking_lps <- res_LPS %>%
+  filter(!is.na(log2FoldChange)) %>%
+  arrange(desc(log2FoldChange)) %>%
+  { setNames(.$log2FoldChange, .$gene) }
+
+# 분석 대상 term 먼저 정의
+target_terms <- c(
+  "KEGG_FATTY_ACID_METABOLISM",
+  "KEGG_OXIDATIVE_PHOSPHORYLATION",
+  "KEGG_LINOLEIC_ACID_METABOLISM",
+  "KEGG_VALINE_LEUCINE_AND_ISOLEUCINE_DEGRADATION"
+)
+
+# msigdbr subcategory 이름은 버전마다 다름 → C2 전체 로드 후 gs_name으로 필터
+msig_kegg_target <- msigdbr(species = "Homo sapiens", category = "C2") %>%
+  dplyr::select(gs_name, gene_symbol) %>%
+  filter(gs_name %in% target_terms)
+
+cat("Gene sets found:", paste(unique(msig_kegg_target$gs_name), collapse = ", "), "\n")
+
+gsea_lps_kegg <- GSEA(
+  geneList      = ranking_lps,
+  TERM2GENE     = msig_kegg_target,
+  pvalueCutoff  = 1,          # 4개 term 모두 결과 반환
+  pAdjustMethod = "BH",
+  minGSSize     = 10,
+  maxGSSize     = 500,
+  verbose       = FALSE
+)
+
+gsea_lps_kegg_result <- gsea_lps_kegg@result %>%
+  dplyr::select(ID, setSize, NES, pvalue, p.adjust) %>%
+  dplyr::arrange(desc(NES))
+
+print(gsea_lps_kegg_result)
+```
+
+## 12-2. NES 요약 바차트
+
+```{r gsea_lps_kegg_nes, fig.width=8, fig.height=4}
+nes_df <- gsea_lps_kegg_result %>%
+  dplyr::mutate(
+    sig_label = dplyr::case_when(
+      p.adjust < 0.001 ~ "***",
+      p.adjust < 0.01  ~ "**",
+      p.adjust < 0.05  ~ "*",
+      TRUE             ~ "n.s."
+    ),
+    term_short = stringr::str_remove(ID, "^KEGG_") %>%
+                 stringr::str_replace_all("_", " ") %>%
+                 stringr::str_to_sentence(),
+    term_short = factor(term_short, levels = term_short[order(NES)])
+  )
+
+ggplot(nes_df, aes(x = term_short, y = NES, fill = NES > 0)) +
+  geom_col(width = 0.65, color = "grey25", linewidth = 0.3) +
+  geom_text(
+    aes(label = sig_label,
+        y     = NES + dplyr::if_else(NES >= 0, 0.06, -0.06)),
+    size = 4.5, vjust = 0.5
+  ) +
+  geom_hline(yintercept = 0, color = "grey20", linewidth = 0.4) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("TRUE" = "#D32F2F", "FALSE" = "#1565C0"),
+    guide  = "none"
+  ) +
+  labs(
+    title    = "GSEA — KEGG Metabolic Pathways",
+    subtitle = "siCon_LPS vs siCon  (LPS effect, ranked by log2FC)",
+    x        = "",
+    y        = "Normalized Enrichment Score (NES)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+## 12-3. 개별 Enrichment Plot (4개 term)
+
+```{r gsea_lps_kegg_enrich_plots, fig.width=9, fig.height=4, results='asis'}
+for (term in target_terms) {
+  if (term %in% gsea_lps_kegg@result$ID) {
+    res_row <- gsea_lps_kegg@result %>% filter(ID == term)
+    title_txt <- paste0(
+      stringr::str_remove(term, "^KEGG_") %>%
+        stringr::str_replace_all("_", " ") %>%
+        stringr::str_to_sentence(),
+      "\nNES = ", round(res_row$NES, 3),
+      "  |  padj = ", formatC(res_row$p.adjust, format = "e", digits = 2),
+      "  |  n = ", res_row$setSize
+    )
+    p <- gseaplot2(
+      gsea_lps_kegg,
+      geneSetID = term,
+      title     = title_txt,
+      subplots  = 1:2,
+      color     = "#D32F2F",
+      base_size = 11
+    )
+    print(p)
+    cat("\n\n")
+  } else {
+    cat(sprintf("**%s**: gene set not found in results.\n\n", term))
+  }
+}
+```
+
+---
+
+# 13. ORA — GO & KEGG (siSLC_LPS5 vs siCon_LPS)
+
+```{r ora}
+# 유의미하게 올라간 유전자
+up_genes <- res_KD %>%
+  filter(padj < 0.05, log2FoldChange > 0.58) %>%
+  pull(gene)
+
+dn_genes <- res_KD %>%
+  filter(padj < 0.05, log2FoldChange < -0.58) %>%
+  pull(gene)
+
+cat("UP genes:", length(up_genes), " | DOWN genes:", length(dn_genes), "\n")
+```
+
+### GO Biological Process — UP
+
+```{r go_bp_up, fig.width=10, fig.height=7}
+if (length(up_genes) > 5) {
+  go_up <- enrichGO(
+    gene          = up_genes,
+    OrgDb         = org.Hs.eg.db,
+    keyType       = "SYMBOL",
+    ont           = "BP",
+    pAdjustMethod = "BH",
+    pvalueCutoff  = 0.05,
+    qvalueCutoff  = 0.2
+  )
+  if (nrow(go_up@result) > 0) {
+    dotplot(go_up, showCategory = 20,
+            title = "GO BP — UP in siSLC_LPS5 vs siCon_LPS")
+  } else {
+    cat("No significant GO BP results for UP genes\n")
+  }
+} else {
+  cat("Not enough UP genes for ORA\n")
+}
+```
+
+### GO Biological Process — DOWN
+
+```{r go_bp_dn, fig.width=10, fig.height=7}
+if (length(dn_genes) > 5) {
+  go_dn <- enrichGO(
+    gene          = dn_genes,
+    OrgDb         = org.Hs.eg.db,
+    keyType       = "SYMBOL",
+    ont           = "BP",
+    pAdjustMethod = "BH",
+    pvalueCutoff  = 0.05,
+    qvalueCutoff  = 0.2
+  )
+  if (nrow(go_dn@result) > 0) {
+    dotplot(go_dn, showCategory = 20,
+            title = "GO BP — DOWN in siSLC_LPS5 vs siCon_LPS")
+  } else {
+    cat("No significant GO BP results for DOWN genes\n")
+  }
+} else {
+  cat("Not enough DOWN genes for ORA\n")
+}
+```
+
+### KEGG Pathway — UP
+
+```{r kegg_up, fig.width=10, fig.height=6}
+if (length(up_genes) > 5) {
+  # SYMBOL → ENTREZID 변환
+  eg_up <- bitr(up_genes, fromType = "SYMBOL",
+                toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+  kegg_up <- enrichKEGG(
+    gene          = eg_up$ENTREZID,
+    organism      = "hsa",
+    pAdjustMethod = "BH",
+    pvalueCutoff  = 0.05
+  )
+  if (!is.null(kegg_up) && nrow(kegg_up@result) > 0) {
+    dotplot(kegg_up, showCategory = 20,
+            title = "KEGG — UP in siSLC_LPS5 vs siCon_LPS")
+  } else {
+    cat("No significant KEGG results for UP genes\n")
+  }
+}
+```
+
+---
+
+# 14. SLC Family Gene Analysis: siCon_LPS vs siSLC_LPS5 (Fisher's Exact Test)
+
+## 13-1. SLC family DEG 추출
+
+```{r slc_extract}
+# res_KD = siSLC_LPS5 vs siCon_LPS 결과 사용
+slc_res <- res_KD %>%
+  dplyr::filter(grepl("^SLC", gene)) %>%
+  dplyr::arrange(padj)
+
+cat("Total SLC family genes in results:", nrow(slc_res), "\n")
+cat("SLC DEGs (padj<0.05, |log2FC|>1):",
+    sum(slc_res$padj < 0.05 & abs(slc_res$log2FoldChange) > 1, na.rm = TRUE), "\n")
+cat("  UP  (log2FC > 1):",
+    sum(slc_res$padj < 0.05 & slc_res$log2FoldChange >  1, na.rm = TRUE), "\n")
+cat("  DOWN(log2FC < -1):",
+    sum(slc_res$padj < 0.05 & slc_res$log2FoldChange < -1, na.rm = TRUE), "\n\n")
+
+# 유의미한 SLC DEG 목록
+slc_sig <- slc_res %>%
+  dplyr::filter(padj < 0.05, abs(log2FoldChange) > 1)
+
+print(slc_sig)
+write.csv(slc_res, "SLC_family_DEG_siSLCLPS5_vs_siConLPS_nosiCon1.csv", row.names = FALSE)
+```
+
+---
+
+## 13-2. Fisher's Exact Test — SLC family 유전자군 enrichment
+
+SLC family 유전자가 DEG 목록에서 유의미하게 과대/과소 표현되는지 검정합니다.
+
+```{r slc_fisher_enrichment}
+# 전체 결과에서 분류
+all_res <- res_KD %>% dplyr::filter(!is.na(padj))
+
+n_total    <- nrow(all_res)
+n_slc      <- sum(grepl("^SLC", all_res$gene))
+n_nonslc   <- n_total - n_slc
+
+fisher_results <- list()
+
+for (direction in c("UP", "DOWN")) {
+  if (direction == "UP") {
+    is_deg <- all_res$padj < 0.05 & all_res$log2FoldChange >  1
+  } else {
+    is_deg <- all_res$padj < 0.05 & all_res$log2FoldChange < -1
+  }
+
+  is_slc <- grepl("^SLC", all_res$gene)
+
+  # 2x2 contingency table
+  #              | DEG | non-DEG |
+  # SLC family   |  a  |    b    |
+  # non-SLC      |  c  |    d    |
+  a <- sum( is_slc &  is_deg, na.rm = TRUE)
+  b <- sum( is_slc & !is_deg, na.rm = TRUE)
+  c <- sum(!is_slc &  is_deg, na.rm = TRUE)
+  d <- sum(!is_slc & !is_deg, na.rm = TRUE)
+
+  ct <- matrix(c(a, c, b, d), nrow = 2,
+               dimnames = list(c("SLC", "non-SLC"), c("DEG", "non-DEG")))
+
+  ft <- fisher.test(ct)
+
+  fisher_results[[direction]] <- data.frame(
+    Direction    = direction,
+    SLC_DEG      = a,
+    SLC_nonDEG   = b,
+    nonSLC_DEG   = c,
+    nonSLC_nonDEG= d,
+    OddsRatio    = round(ft$estimate, 4),
+    p_value      = ft$p.value,
+    CI_lower     = round(ft$conf.int[1], 4),
+    CI_upper     = round(ft$conf.int[2], 4),
+    Significant  = ft$p.value < 0.05
+  )
+
+  cat(sprintf("[SLC enrichment — %s DEGs]\n", direction))
+  print(ct)
+  cat(sprintf("  Odds Ratio : %.4f (95%% CI: %.4f – %.4f)\n",
+              ft$estimate, ft$conf.int[1], ft$conf.int[2]))
+  cat(sprintf("  p-value    : %.4e  %s\n\n",
+              ft$p.value,
+              ifelse(ft$p.value < 0.001, "***",
+                     ifelse(ft$p.value < 0.01, "**",
+                            ifelse(ft$p.value < 0.05, "*", "ns")))))
+}
+
+enrich_df <- do.call(rbind, fisher_results)
+rownames(enrich_df) <- NULL
+print(enrich_df)
+```
+
+---
+
+## 13-3. Per-gene Fisher's Exact Test — SLC 유전자별 개별 검정
+
+각 SLC 유전자에 대해 raw count 기반 2×2 Fisher's exact test를 수행합니다.
+
+```{r slc_per_gene_fisher}
+# siCon_LPS, siSLC_LPS5 샘플 컬럼 추출
+ctrl_cols <- grep("siCon_LPS",  colnames(counts_filt), value = TRUE)
+kd_cols   <- grep("siSLC_LPS5", colnames(counts_filt), value = TRUE)
+
+cat("siCon_LPS samples :", paste(ctrl_cols, collapse = ", "), "\n")
+cat("siSLC_LPS5 samples:", paste(kd_cols,   collapse = ", "), "\n\n")
+
+# 라이브러리 크기 (그룹 합계)
+lib_ctrl <- sum(counts_filt[, ctrl_cols])
+lib_kd   <- sum(counts_filt[, kd_cols])
+
+# SLC 유전자만 추출
+slc_genes_in_counts <- rownames(counts_filt)[grepl("^SLC", rownames(counts_filt))]
+slc_counts <- counts_filt[slc_genes_in_counts, c(ctrl_cols, kd_cols)]
+
+# Per-gene Fisher's exact test
+per_gene_fisher <- lapply(slc_genes_in_counts, function(gene) {
+  g_ctrl <- sum(slc_counts[gene, ctrl_cols])
+  g_kd   <- sum(slc_counts[gene, kd_cols])
+
+  # 2x2 table
+  #            | this gene | other genes  |
+  # siCon_LPS  |  g_ctrl   | lib_ctrl - g_ctrl |
+  # siSLC_LPS5 |  g_kd     | lib_kd - g_kd     |
+  ct <- matrix(
+    c(g_ctrl, g_kd,
+      lib_ctrl - g_ctrl, lib_kd - g_kd),
+    nrow = 2,
+    dimnames = list(c("siCon_LPS", "siSLC_LPS5"), c("this_gene", "other_genes"))
+  )
+
+  ft <- tryCatch(fisher.test(ct), error = function(e) NULL)
+  if (is.null(ft)) return(NULL)
+
+  data.frame(
+    gene         = gene,
+    count_ctrl   = g_ctrl,
+    count_kd     = g_kd,
+    OddsRatio    = round(ft$estimate, 4),
+    p_value      = ft$p.value,
+    stringsAsFactors = FALSE
+  )
+})
+
+per_gene_df <- do.call(rbind, Filter(Negate(is.null), per_gene_fisher))
+
+# BH correction
+per_gene_df$p_adj <- p.adjust(per_gene_df$p_value, method = "BH")
+per_gene_df$log2OR <- log2(per_gene_df$OddsRatio + 1e-6)
+
+# DESeq2 결과와 합치기
+per_gene_df <- per_gene_df %>%
+  dplyr::left_join(
+    slc_res %>% dplyr::select(gene, log2FoldChange, padj),
+    by = "gene"
+  ) %>%
+  dplyr::arrange(p_adj)
+
+cat("SLC genes significant by Fisher (p_adj < 0.05):",
+    sum(per_gene_df$p_adj < 0.05, na.rm = TRUE), "\n\n")
+
+print(head(per_gene_df, 20))
+write.csv(per_gene_df, "SLC_per_gene_fisher_siSLCLPS5_vs_siConLPS_nosiCon1.csv", row.names = FALSE)
+```
+
+---
+
+## 13-4. Visualization
+
+### Volcano plot — SLC genes 강조
+
+```{r slc_volcano, fig.width=10, fig.height=7}
+# res_KD에 SLC 여부 표시
+plot_df <- res_KD %>%
+  dplyr::mutate(
+    is_slc = grepl("^SLC", gene),
+    sig    = !is.na(padj) & padj < 0.05 & abs(log2FoldChange) > 0.58,
+    label  = ifelse(is_slc & sig, gene, NA)
+  )
+
+ggplot(plot_df, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(data = dplyr::filter(plot_df, !is_slc),
+             color = "grey80", size = 0.8, alpha = 0.5) +
+  geom_point(data = dplyr::filter(plot_df,  is_slc & !sig),
+             color = "#90CAF9", size = 1.5, alpha = 0.8) +
+  geom_point(data = dplyr::filter(plot_df,  is_slc &  sig),
+             aes(color = log2FoldChange > 0), size = 2.5) +
+  scale_color_manual(values = c("TRUE" = "#D32F2F", "FALSE" = "#1565C0"),
+                     labels = c("TRUE" = "SLC UP", "FALSE" = "SLC DOWN")) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = c(-0.58, 0.58),     linetype = "dashed", color = "grey40") +
+  geom_text_repel(aes(label = label), size = 3, max.overlaps = 20,
+                  segment.color = "grey50") +
+  labs(
+    title    = "Volcano Plot: siSLC_LPS5 vs siCon_LPS",
+    subtitle = "SLC family genes highlighted",
+    x        = "log2 Fold Change",
+    y        = "-log10(padj)",
+    color    = ""
+  ) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+### SLC DEG log2FC bar chart
+
+```{r slc_bar, fig.width=10, fig.height=6}
+slc_sig_bar <- per_gene_df %>%
+  dplyr::filter(p_adj < 0.05) %>%
+  dplyr::arrange(log2FoldChange)
+
+if (nrow(slc_sig_bar) > 0) {
+  slc_sig_bar$gene <- factor(slc_sig_bar$gene, levels = slc_sig_bar$gene)
+
+  p <-ggplot(slc_sig_bar, aes(x = gene, y = log2FoldChange,
+                           fill = log2FoldChange > 0)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = sprintf("p=%.3f", p_adj),
+                  y = ifelse(log2FoldChange > 0,
+                             log2FoldChange + 0.05,
+                             log2FoldChange - 0.05)),
+              hjust = ifelse(slc_sig_bar$log2FoldChange > 0, 0, 1),
+              size = 3) +
+    coord_flip() +
+    scale_fill_manual(values = c("TRUE" = "#D32F2F", "FALSE" = "#1565C0"),
+                      labels = c("TRUE" = "UP", "FALSE" = "DOWN")) +
+    labs(
+      title = "Significant SLC Family Genes (Fisher p_adj < 0.05)",
+      subtitle = "siSLC_LPS5 vs siCon_LPS",
+      x = "", y = "log2 Fold Change (DESeq2)", fill = ""
+    ) +
+    theme_bw() +
+    theme(legend.position = "top")
+    print(p)  # 화면 출력
+  ggsave(slc_output("02_SLC7A5_mono_Journal/04_bulkRNAseq/slc_sig_barplot_nosiCon1.png"), plot = p, width = 12, height = 8, dpi = 300)
+
+} else {
+  cat("No SLC genes significant after BH correction (p_adj < 0.05)\n")
+  # p_adj 기준 완화하여 top 20 표시
+  top20_slc <- per_gene_df %>% dplyr::slice_head(n = 20)
+  top20_slc$gene <- factor(top20_slc$gene,
+                            levels = top20_slc$gene[order(top20_slc$log2FoldChange)])
+
+  p <-ggplot(top20_slc, aes(x = gene, y = log2FoldChange, fill = log2FoldChange > 0)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    scale_fill_manual(values = c("TRUE" = "#D32F2F", "FALSE" = "#1565C0"),
+                      labels = c("TRUE" = "UP", "FALSE" = "DOWN")) +
+    labs(title = "Top 20 SLC Genes by Fisher p-value (uncorrected)",
+         x = "", y = "log2 Fold Change", fill = "") +
+    theme_bw()
+  print(p)
+  ggsave(slc_output("02_SLC7A5_mono_Journal/04_bulkRNAseq/slc_top20_barplot_nosiCon1.png"), plot = p, width = 12, height = 8, dpi = 300)
+}
+
+```
+
+### SLC gene expression heatmap
+
+```{r slc_heatmap, fig.width=10, fig.height=8}
+# VST matrix에서 SLC 유전자 추출
+slc_in_vst <- rownames(vst_mat)[grepl("^SLC", rownames(vst_mat))]
+
+# Fisher p_adj < 0.05 또는 top 30 (p_value 기준)
+slc_show <- per_gene_df %>%
+  { if (sum(.$p_adj < 0.05) >= 5)
+      dplyr::filter(., p_adj < 0.05)
+    else
+      dplyr::slice_head(., n = 30) } %>%
+  dplyr::pull(gene) %>%
+  intersect(slc_in_vst)
+
+if (length(slc_show) >= 2) {
+  vst_slc <- vst_mat[slc_show, c(ctrl_cols, kd_cols)]
+
+  ann_col_slc <- data.frame(
+    group = c(rep("siCon_LPS", length(ctrl_cols)),
+              rep("siSLC_LPS5", length(kd_cols)))
+  )
+  rownames(ann_col_slc) <- c(ctrl_cols, kd_cols)
+
+  group_colors_slc <- list(group = c(
+    siCon_LPS  = "#D6604D",
+    siSLC_LPS5 = "#74C476"
+  ))
+
+  pheatmap(
+    vst_slc,
+    scale             = "row",
+    annotation_col    = ann_col_slc,
+    annotation_colors = group_colors_slc,
+    clustering_method = "ward.D2",
+    color             = colorRampPalette(c("#2166AC", "white", "#B2182B"))(200),
+    show_rownames     = TRUE,
+    fontsize_row      = 8,
+    main              = "SLC Family Gene Expression Heatmap\n(siCon_LPS vs siSLC_LPS5)"
+  )
+} else {
+  cat("Not enough SLC genes to draw heatmap\n")
+}
+
+pdf("SLC_heatmap_nosiCon1.pdf", width = 10, height = 20)
+
+pheatmap(
+  vst_slc,
+  scale             = "row",
+  annotation_col    = ann_col_slc,
+  annotation_colors = group_colors_slc,
+  clustering_method = "ward.D2",
+  color             = colorRampPalette(c("#2166AC", "white", "#B2182B"))(200),
+  show_rownames     = TRUE,
+  fontsize_row      = 8,
+  main              = "SLC Family Gene Expression Heatmap\n(siCon_LPS vs siSLC_LPS5)"
+)
+
+dev.off()
+```
+
+---
+
+# 15. LPS-induced genes reversed by siSLC7A5
+
+```{r lps_up_kd_down_overlap, fig.width=9, fig.height=5}
+# Genes induced by LPS in siCon and reduced by siSLC7A5 KD under LPS
+lps_up_genes <- res_LPS %>%
+  dplyr::filter(!is.na(padj), padj < 0.05, log2FoldChange > 0.25) %>%
+  dplyr::pull(gene) %>%
+  unique()
+
+kd_down_genes <- res_KD %>%
+  dplyr::filter(!is.na(padj), padj < 0.05, log2FoldChange < -0.25) %>%
+  dplyr::pull(gene) %>%
+  unique()
+
+overlap_genes <- intersect(lps_up_genes, kd_down_genes)
+union_genes <- union(lps_up_genes, kd_down_genes)
+all_tested_genes <- intersect(
+  res_LPS %>% dplyr::filter(!is.na(padj)) %>% dplyr::pull(gene),
+  res_KD %>% dplyr::filter(!is.na(padj)) %>% dplyr::pull(gene)
+)
+
+overlap_table <- matrix(
+  c(
+    length(intersect(lps_up_genes, kd_down_genes)),
+    length(setdiff(lps_up_genes, kd_down_genes)),
+    length(setdiff(kd_down_genes, lps_up_genes)),
+    length(setdiff(all_tested_genes, union_genes))
+  ),
+  nrow = 2,
+  byrow = TRUE,
+  dimnames = list(
+    LPS_up = c("yes", "no"),
+    KD_down = c("yes", "no")
+  )
+)
+
+overlap_fisher <- fisher.test(overlap_table, alternative = "greater")
+
+overlap_summary <- tibble::tibble(
+  category = c(
+    "siCon_LPS_up_vs_siCon",
+    "siSLC_LPS5_down_vs_siCon_LPS",
+    "overlap",
+    "union"
+  ),
+  n_genes = c(
+    length(lps_up_genes),
+    length(kd_down_genes),
+    length(overlap_genes),
+    length(union_genes)
+  )
+) %>%
+  dplyr::mutate(
+    percent_of_LPS_up = ifelse(length(lps_up_genes) > 0,
+                               100 * n_genes / length(lps_up_genes), NA_real_),
+    percent_of_KD_down = ifelse(length(kd_down_genes) > 0,
+                                100 * n_genes / length(kd_down_genes), NA_real_)
+  )
+
+print(overlap_summary)
+print(overlap_table)
+cat("Fisher exact test for overlap enrichment:\n")
+cat("  odds ratio:", overlap_fisher$estimate, "\n")
+cat("  p-value   :", overlap_fisher$p.value, "\n")
+
+overlap_enrichment <- tibble::tibble(
+  universe_genes = length(all_tested_genes),
+  lps_up_genes = length(lps_up_genes),
+  kd_down_genes = length(kd_down_genes),
+  overlap_genes = length(overlap_genes),
+  odds_ratio = unname(overlap_fisher$estimate),
+  fisher_p_value = overlap_fisher$p.value
+)
+
+overlap_membership <- tibble::tibble(gene = union_genes) %>%
+  dplyr::mutate(
+    siCon_LPS_up_vs_siCon = gene %in% lps_up_genes,
+    siSLC_LPS5_down_vs_siCon_LPS = gene %in% kd_down_genes,
+    overlap = siCon_LPS_up_vs_siCon & siSLC_LPS5_down_vs_siCon_LPS
+  ) %>%
+  dplyr::left_join(
+    res_LPS %>%
+      dplyr::select(gene, LPS_log2FC = log2FoldChange, LPS_padj = padj),
+    by = "gene"
+  ) %>%
+  dplyr::left_join(
+    res_KD %>%
+      dplyr::select(gene, KD_log2FC = log2FoldChange, KD_padj = padj),
+    by = "gene"
+  ) %>%
+  dplyr::arrange(dplyr::desc(overlap), dplyr::desc(LPS_log2FC), KD_log2FC)
+
+write.csv(overlap_summary,
+          "LPS_up_KD_down_overlap_summary_nosiCon1.csv",
+          row.names = FALSE)
+write.csv(overlap_enrichment,
+          "LPS_up_KD_down_overlap_enrichment_nosiCon1.csv",
+          row.names = FALSE)
+write.csv(overlap_membership,
+          "LPS_up_KD_down_overlap_genes_nosiCon1.csv",
+          row.names = FALSE)
+
+plot_counts <- tibble::tibble(
+  intersection = c("LPS up only", "Overlap", "KD down only"),
+  n_genes = c(
+    length(setdiff(lps_up_genes, kd_down_genes)),
+    length(overlap_genes),
+    length(setdiff(kd_down_genes, lps_up_genes))
+  )
+) %>%
+  dplyr::mutate(intersection = factor(intersection,
+                                      levels = c("LPS up only", "Overlap", "KD down only")))
+
+ggplot(plot_counts, aes(x = intersection, y = n_genes, fill = intersection)) +
+  geom_col(width = 0.7, color = "grey25") +
+  geom_text(aes(label = n_genes), vjust = -0.4, size = 4) +
+  scale_fill_manual(values = c(
+    "LPS up only" = "#D95F02",
+    "Overlap" = "#1B9E77",
+    "KD down only" = "#7570B3"
+  )) +
+  labs(
+    title = "Overlap of LPS-induced and siSLC7A5-reduced genes",
+    subtitle = paste0(
+      "Overlap = ", length(overlap_genes), " genes; ",
+      ifelse(length(lps_up_genes) > 0,
+             sprintf("%.1f", 100 * length(overlap_genes) / length(lps_up_genes)),
+             "NA"),
+      "% of siCon_LPS-up genes; Fisher p = ",
+      formatC(overlap_fisher$p.value, format = "e", digits = 2)
+    ),
+    x = "",
+    y = "Number of genes",
+    fill = ""
+  ) +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+```{r lps_up_kd_down_upset_like, fig.width=8, fig.height=5}
+# UpSet-like visualization without extra package dependencies
+upset_like_df <- tibble::tibble(
+  intersection = c("LPS up only", "Overlap", "KD down only"),
+  n_genes = c(
+    length(setdiff(lps_up_genes, kd_down_genes)),
+    length(overlap_genes),
+    length(setdiff(kd_down_genes, lps_up_genes))
+  ),
+  LPS_up = c(TRUE, TRUE, FALSE),
+  KD_down = c(FALSE, TRUE, TRUE)
+) %>%
+  dplyr::arrange(dplyr::desc(n_genes), intersection) %>%
+  dplyr::mutate(intersection = factor(intersection, levels = intersection))
+
+bar_df <- upset_like_df %>%
+  dplyr::select(intersection, n_genes)
+
+plot_max <- max(bar_df$n_genes, 1)
+label_x <- levels(upset_like_df$intersection)[1]
+
+dot_df <- upset_like_df %>%
+  tidyr::pivot_longer(c(LPS_up, KD_down),
+                      names_to = "gene_set",
+                      values_to = "included") %>%
+  dplyr::mutate(
+    gene_set = factor(gene_set,
+                      levels = c("KD_down", "LPS_up"),
+                      labels = c("siSLC_LPS5 down", "siCon_LPS up"))
+  )
+
+p_upset <- ggplot() +
+  geom_col(data = bar_df,
+           aes(x = intersection, y = n_genes),
+           width = 0.65, fill = "#4D4D4D") +
+  geom_text(data = bar_df,
+            aes(x = intersection, y = n_genes, label = n_genes),
+            vjust = -0.4, size = 4) +
+  geom_point(data = dot_df,
+             aes(x = intersection,
+                 y = -0.16 * plot_max -
+                   as.numeric(gene_set) * 0.12 * plot_max,
+                 alpha = included),
+             size = 4, color = "#1B9E77") +
+  geom_line(data = dplyr::filter(dot_df, included),
+            aes(x = intersection,
+                y = -0.16 * plot_max -
+                  as.numeric(gene_set) * 0.12 * plot_max,
+                group = intersection),
+            linewidth = 0.8, color = "#1B9E77") +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.15), guide = "none") +
+  scale_y_continuous(
+    limits = c(-0.48 * plot_max, plot_max * 1.15),
+    breaks = scales::pretty_breaks(),
+    labels = function(x) ifelse(x < 0, "", x),
+    expand = expansion(mult = c(0, 0.02))
+  ) +
+  annotate("text",
+           x = label_x,
+           y = -0.16 * plot_max - c(1, 2) * 0.12 * plot_max,
+           label = c("siSLC_LPS5 down", "siCon_LPS up"),
+           hjust = 1.25, size = 3.5) +
+  labs(
+    title = "UpSet-like overlap: LPS-up genes reversed by siSLC7A5 KD",
+    subtitle = "Thresholds: padj < 0.05, LPS log2FC > 0.25, KD log2FC < -0.25",
+    x = "",
+    y = "Intersection size"
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  )
+
+p_upset   # 화면 출력
+
+ggsave(
+  slc_output("02_SLC7A5_mono_Journal/04_bulkRNAseq/lps_up_kd_down_upset_nosiCon1.pdf"),
+  plot = p_upset, width = 5, height = 7, dpi = 300
+)
+```
+
+```{r lps_up_kd_down_venn, fig.width=7, fig.height=5}
+# Two-set Venn diagram for the same comparison
+venn_counts <- tibble::tibble(
+  region = c("LPS up only", "Overlap", "KD down only"),
+  n_genes = c(
+    length(setdiff(lps_up_genes, kd_down_genes)),
+    length(overlap_genes),
+    length(setdiff(kd_down_genes, lps_up_genes))
+  )
+)
+
+circle_df <- dplyr::bind_rows(
+  tibble::tibble(
+    set = "siCon_LPS up",
+    angle = seq(0, 2 * pi, length.out = 300),
+    center_x = -0.65,
+    center_y = 0,
+    radius = 1
+  ),
+  tibble::tibble(
+    set = "siSLC_LPS5 down",
+    angle = seq(0, 2 * pi, length.out = 300),
+    center_x = 0.65,
+    center_y = 0,
+    radius = 1
+  )
+) %>%
+  dplyr::mutate(
+    x = center_x + radius * cos(angle),
+    y = center_y + radius * sin(angle)
+  )
+
+label_df <- tibble::tibble(
+  x = c(-1.05, 0, 1.05),
+  y = c(0, 0, 0),
+  label = c(
+    paste0("LPS up only\n", venn_counts$n_genes[venn_counts$region == "LPS up only"]),
+    paste0("Overlap\n", venn_counts$n_genes[venn_counts$region == "Overlap"]),
+    paste0("KD down only\n", venn_counts$n_genes[venn_counts$region == "KD down only"])
+  )
+)
+
+set_label_df <- tibble::tibble(
+  x = c(-0.95, 0.95),
+  y = c(1.15, 1.15),
+  label = c(
+    paste0("siCon_LPS up\nn = ", length(lps_up_genes)),
+    paste0("siSLC_LPS5 down\nn = ", length(kd_down_genes))
+  )
+)
+
+ggplot(circle_df, aes(x = x, y = y, fill = set, color = set, group = set)) +
+  geom_polygon(alpha = 0.28, linewidth = 1.1) +
+  geom_text(data = label_df,
+            aes(x = x, y = y, label = label),
+            inherit.aes = FALSE, size = 4.2, fontface = "bold") +
+  geom_text(data = set_label_df,
+            aes(x = x, y = y, label = label),
+            inherit.aes = FALSE, size = 3.8) +
+  scale_fill_manual(values = c("siCon_LPS up" = "#D95F02",
+                               "siSLC_LPS5 down" = "#7570B3")) +
+  scale_color_manual(values = c("siCon_LPS up" = "#D95F02",
+                                "siSLC_LPS5 down" = "#7570B3")) +
+  coord_equal(xlim = c(-2, 2), ylim = c(-1.25, 1.45), expand = FALSE) +
+  labs(
+    title = "Venn diagram: LPS-up genes reversed by siSLC7A5 KD",
+    subtitle = paste0(
+      "Overlap = ", length(overlap_genes), " genes; Fisher p = ",
+      formatC(overlap_fisher$p.value, format = "e", digits = 2)
+    ),
+    x = NULL,
+    y = NULL
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+---
+
+# 16. Session Info
+
+```{r session_info}
+sessionInfo()
+```

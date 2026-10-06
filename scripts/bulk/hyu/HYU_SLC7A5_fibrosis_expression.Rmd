@@ -1,0 +1,520 @@
+---
+title: "HYU bulk RNA-seq: SLC7A5 expression by fibrosis severity"
+author: "Jaehyun Choi"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r repository-setup, include=FALSE}
+.slc_start <- Sys.getenv("SLC7A5_REPO_ROOT", unset = getwd())
+.slc_repo <- normalizePath(.slc_start, mustWork = TRUE)
+while (!file.exists(file.path(.slc_repo, "R", "paths.R"))) {
+  .slc_parent <- dirname(.slc_repo)
+  if (identical(.slc_parent, .slc_repo)) stop("Start inside the repository or set SLC7A5_REPO_ROOT.")
+  .slc_repo <- .slc_parent
+}
+source(file.path(.slc_repo, "R", "paths.R"))
+slc_setup("hyu_fibrosis")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+# 1. Purpose
+
+This Rmd uses only the independent HYU patient bulk RNA-seq cohort in `01_Data`.
+It does not use the siSLC7A5 bulk RNA-seq DEG results.
+
+Main output:
+
+- SLC7A5 expression grouped by fibrosis severity
+- SLC7A5 expression grouped by disease category 1/2/3
+- SLC7A5 expression grouped by fibrosis category F0/F1/F2-F3
+- Summary statistics and association test between SLC7A5 expression and fibrosis severity
+
+# 2. Libraries and Paths
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(RColorBrewer)
+
+filter <- dplyr::filter
+select <- dplyr::select
+arrange <- dplyr::arrange
+```
+
+```{r paths}
+project_dir <- slc_output_dir("03_bulkRNAseq")
+data_dir <- file.path(slc_data_root, "03_bulkRNAseq", "01_Data")
+out_dir <- file.path(project_dir, "02_analysis", "HYU_SLC7A5_fibrosis")
+fig_dir <- file.path(project_dir, "03_Figure", "HYU_SLC7A5_fibrosis")
+
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+# 3. Import HYU Patient Cohort
+
+```{r import}
+metadata <- read.csv(
+  slc_input("hyu_metadata"),
+  fileEncoding = "UTF-8-BOM",
+  check.names = FALSE
+)
+
+fpkm_raw <- read_excel(slc_input("hyu_fpkm"))
+
+gene_symbol_col <- names(fpkm_raw)[2]
+
+expr_tbl <- fpkm_raw %>%
+  rename(gene_symbol = all_of(gene_symbol_col)) %>%
+  select(-ens_id) %>%
+  mutate(gene_symbol = as.character(gene_symbol)) %>%
+  filter(!is.na(gene_symbol), gene_symbol != "") %>%
+  mutate(across(-gene_symbol, as.numeric)) %>%
+  group_by(gene_symbol) %>%
+  summarise(across(everything(), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+
+expr_fpkm <- expr_tbl %>%
+  column_to_rownames("gene_symbol") %>%
+  as.matrix()
+
+common_samples <- intersect(colnames(expr_fpkm), metadata$Sample)
+
+metadata <- metadata %>%
+  filter(Sample %in% common_samples) %>%
+  distinct(Sample, .keep_all = TRUE) %>%
+  arrange(match(Sample, common_samples))
+
+expr_fpkm <- expr_fpkm[, metadata$Sample, drop = FALSE]
+stopifnot(identical(colnames(expr_fpkm), metadata$Sample))
+
+cat("Matched HYU patient samples:", ncol(expr_fpkm), "\n")
+cat("SLC7A5 found:", "SLC7A5" %in% rownames(expr_fpkm), "\n")
+
+table(metadata$Degree_of_fibrosis, useNA = "ifany")
+```
+
+# 4. Clean Fibrosis Severity and SLC7A5 Expression
+
+```{r clean}
+stopifnot("SLC7A5" %in% rownames(expr_fpkm))
+
+plot_df <- metadata %>%
+  mutate(
+    fibrosis_raw = as.character(Degree_of_fibrosis),
+    fibrosis_stage = case_when(
+      fibrosis_raw == "0" ~ 0,
+      fibrosis_raw %in% c("1A", "1B", "1C") ~ 1,
+      fibrosis_raw == "2" ~ 2,
+      fibrosis_raw == "3" ~ 3,
+      fibrosis_raw == "4" ~ 4,
+      TRUE ~ NA_real_
+    ),
+    fibrosis_group = factor(
+      paste0("F", fibrosis_stage),
+      levels = paste0("F", 0:4)
+    ),
+    fibrosis_group_3 = case_when(
+      fibrosis_stage == 0 ~ "F0",
+      fibrosis_stage == 1 ~ "F1",
+      fibrosis_stage %in% c(2, 3) ~ "F2/F3",
+      fibrosis_stage == 4 ~ "F4",
+      TRUE ~ NA_character_
+    ),
+    fibrosis_group_3 = factor(fibrosis_group_3, levels = c("F0", "F1", "F2/F3", "F4")),
+    disease_group = factor(
+      as.character(Disease),
+      levels = c("1", "2", "3"),
+      labels = c("Disease 1", "Disease 2", "Disease 3")
+    ),
+    slc7a5_fpkm = as.numeric(expr_fpkm["SLC7A5", Sample]),
+    slc7a5_log2fpkm = log2(slc7a5_fpkm + 1)
+  ) %>%
+  filter(!is.na(fibrosis_stage), !is.na(slc7a5_log2fpkm))
+
+cat("Samples used for SLC7A5-fibrosis plot:", nrow(plot_df), "\n")
+print(table(plot_df$fibrosis_group, useNA = "ifany"))
+print(table(plot_df$fibrosis_group_3, useNA = "ifany"))
+print(table(plot_df$disease_group, useNA = "ifany"))
+
+write.csv(
+  plot_df,
+  file.path(out_dir, "HYU_SLC7A5_expression_by_fibrosis_sample_level.csv"),
+  row.names = FALSE
+)
+```
+
+# 5. Group Summary
+
+```{r summary}
+summary_df <- plot_df %>%
+  group_by(fibrosis_group, fibrosis_stage) %>%
+  summarise(
+    n = n(),
+    mean_log2fpkm = mean(slc7a5_log2fpkm, na.rm = TRUE),
+    sd_log2fpkm = sd(slc7a5_log2fpkm, na.rm = TRUE),
+    sem_log2fpkm = sd_log2fpkm / sqrt(n),
+    median_log2fpkm = median(slc7a5_log2fpkm, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+write.csv(
+  summary_df,
+  file.path(out_dir, "HYU_SLC7A5_expression_by_fibrosis_summary.csv"),
+  row.names = FALSE
+)
+
+summary_df
+```
+
+# 6. Statistics
+
+```{r statistics}
+kruskal_res <- kruskal.test(slc7a5_log2fpkm ~ fibrosis_group, data = plot_df)
+spearman_res <- cor.test(
+  plot_df$slc7a5_log2fpkm,
+  plot_df$fibrosis_stage,
+  method = "spearman",
+  exact = FALSE
+)
+
+cat("Kruskal-Wallis p-value:", kruskal_res$p.value, "\n")
+cat("Spearman rho:", unname(spearman_res$estimate), "\n")
+cat("Spearman p-value:", spearman_res$p.value, "\n")
+
+stats_df <- tibble(
+  test = c("Kruskal-Wallis", "Spearman"),
+  statistic = c(unname(kruskal_res$statistic), unname(spearman_res$estimate)),
+  p_value = c(kruskal_res$p.value, spearman_res$p.value)
+)
+
+write.csv(
+  stats_df,
+  file.path(out_dir, "HYU_SLC7A5_fibrosis_statistics.csv"),
+  row.names = FALSE
+)
+```
+
+# 7. Violin Plot: SLC7A5 by Disease Group
+
+```{r violin_disease, fig.width=7, fig.height=5}
+plot_df_disease <- plot_df %>%
+  filter(!is.na(disease_group), disease_group %in% c("Disease 1", "Disease 2", "Disease 3")) %>%
+  mutate(disease_group = droplevels(disease_group))
+
+disease_kw <- kruskal.test(slc7a5_log2fpkm ~ disease_group, data = plot_df_disease)
+
+disease_pairwise_comparisons <- tribble(
+  ~group1,     ~group2,
+  "Disease 1", "Disease 2",
+  "Disease 2", "Disease 3",
+  "Disease 1", "Disease 3"
+)
+
+disease_pairwise_stats <- disease_pairwise_comparisons %>%
+  mutate(
+    p_value = map2_dbl(group1, group2, function(g1, g2) {
+      x <- plot_df_disease %>% filter(disease_group == g1) %>% pull(slc7a5_log2fpkm)
+      y <- plot_df_disease %>% filter(disease_group == g2) %>% pull(slc7a5_log2fpkm)
+      wilcox.test(x, y, exact = FALSE)$p.value
+    }),
+    p_adj = p.adjust(p_value, method = "BH"),
+    p_adj_label = case_when(
+      p_adj < 0.0001 ~ "****",
+      p_adj < 0.001  ~ "***",
+      p_adj < 0.01   ~ "**",
+      p_adj < 0.05   ~ "*",
+      TRUE           ~ "ns"
+    ),
+    x = match(group1, levels(plot_df_disease$disease_group)),
+    xend = match(group2, levels(plot_df_disease$disease_group))
+  )
+
+disease_y_range <- range(plot_df_disease$slc7a5_log2fpkm, na.rm = TRUE)
+disease_y_step <- diff(disease_y_range) * 0.12
+if (disease_y_step == 0) {
+  disease_y_step <- 0.2
+}
+
+disease_pairwise_stats <- disease_pairwise_stats %>%
+  mutate(
+    y = max(plot_df_disease$slc7a5_log2fpkm, na.rm = TRUE) + disease_y_step * row_number(),
+    y_tip = y - disease_y_step * 0.18
+  )
+
+write.csv(
+  disease_pairwise_stats,
+  file.path(out_dir, "HYU_SLC7A5_disease_1_2_3_pairwise_wilcox_BH.csv"),
+  row.names = FALSE
+)
+
+p_violin_disease <- ggplot(plot_df_disease, aes(x = disease_group, y = slc7a5_log2fpkm, fill = disease_group)) +
+  geom_violin(trim = FALSE, alpha = 0.75, color = "black", linewidth = 0.25) +
+  geom_boxplot(width = 0.16, outlier.shape = NA, alpha = 0.85, color = "black") +
+  geom_jitter(width = 0.08, size = 1.7, alpha = 0.7) +
+  geom_segment(
+    data = disease_pairwise_stats,
+    aes(x = x, xend = xend, y = y, yend = y),
+    inherit.aes = FALSE,
+    linewidth = 0.45
+  ) +
+  geom_segment(
+    data = disease_pairwise_stats,
+    aes(x = x, xend = x, y = y, yend = y_tip),
+    inherit.aes = FALSE,
+    linewidth = 0.45
+  ) +
+  geom_segment(
+    data = disease_pairwise_stats,
+    aes(x = xend, xend = xend, y = y, yend = y_tip),
+    inherit.aes = FALSE,
+    linewidth = 0.45
+  ) +
+  geom_text(
+    data = disease_pairwise_stats,
+    aes(x = (x + xend) / 2, y = y + disease_y_step * 0.12, label = p_adj_label),
+    inherit.aes = FALSE,
+    size = 4.5
+  ) +
+  scale_fill_brewer(palette = "Set2", drop = FALSE) +
+  coord_cartesian(ylim = c(NA, max(disease_pairwise_stats$y) + disease_y_step * 0.45)) +
+  labs(
+    x = "Disease group",
+    y = "SLC7A5 expression (log2 FPKM + 1)",
+    title = "SLC7A5 expression by disease group",
+    subtitle = paste0("Kruskal-Wallis p = ", signif(disease_kw$p.value, 3))
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+print(p_violin_disease)
+
+ggsave(
+  file.path(fig_dir, "HYU_SLC7A5_disease_1_2_3_violin.png"),
+  p_violin_disease,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+ggsave(
+  file.path(fig_dir, "HYU_SLC7A5_disease_1_2_3_violin.pdf"),
+  p_violin_disease,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```
+
+# 8. Violin Plot: SLC7A5 by Fibrosis Group F0/F1/F2-F3
+
+```{r violin_fibrosis_3group, fig.width=7, fig.height=5}
+plot_df_fib3 <- plot_df %>%
+  filter(!is.na(fibrosis_group_3), fibrosis_group_3 %in% c("F0", "F1", "F2/F3")) %>%
+  mutate(fibrosis_group_3 = droplevels(fibrosis_group_3))
+
+fib3_kw <- kruskal.test(slc7a5_log2fpkm ~ fibrosis_group_3, data = plot_df_fib3)
+
+pairwise_comparisons <- tribble(
+  ~group1, ~group2,
+  "F0",    "F1",
+  "F1",    "F2/F3",
+  "F0",    "F2/F3"
+)
+
+pairwise_stats <- pairwise_comparisons %>%
+  mutate(
+    p_value = map2_dbl(group1, group2, function(g1, g2) {
+      x <- plot_df_fib3 %>% filter(fibrosis_group_3 == g1) %>% pull(slc7a5_log2fpkm)
+      y <- plot_df_fib3 %>% filter(fibrosis_group_3 == g2) %>% pull(slc7a5_log2fpkm)
+      wilcox.test(x, y, exact = FALSE)$p.value
+    }),
+    p_adj = p.adjust(p_value, method = "BH"),
+    p_adj_label = case_when(
+      p_adj < 0.0001 ~ "****",
+      p_adj < 0.001  ~ "***",
+      p_adj < 0.01   ~ "**",
+      p_adj < 0.05   ~ "*",
+      TRUE           ~ "ns"
+    ),
+    x = match(group1, levels(plot_df_fib3$fibrosis_group_3)),
+    xend = match(group2, levels(plot_df_fib3$fibrosis_group_3))
+  )
+
+y_range <- range(plot_df_fib3$slc7a5_log2fpkm, na.rm = TRUE)
+y_step <- diff(y_range) * 0.12
+if (y_step == 0) {
+  y_step <- 0.2
+}
+
+pairwise_stats <- pairwise_stats %>%
+  mutate(
+    y = max(plot_df_fib3$slc7a5_log2fpkm, na.rm = TRUE) + y_step * row_number(),
+    y_tip = y - y_step * 0.18
+  )
+
+write.csv(
+  pairwise_stats,
+  file.path(out_dir, "HYU_SLC7A5_fibrosis_F0_F1_F2F3_pairwise_wilcox_BH.csv"),
+  row.names = FALSE
+)
+
+p_violin_fib3 <- ggplot(plot_df_fib3, aes(x = fibrosis_group_3, y = slc7a5_log2fpkm, fill = fibrosis_group_3)) +
+  geom_violin(trim = FALSE, alpha = 0.75, color = "black", linewidth = 0.25) +
+  geom_boxplot(width = 0.16, outlier.shape = NA, alpha = 0.85, color = "black") +
+  geom_jitter(width = 0.08, size = 1.7, alpha = 0.7) +
+  geom_segment(
+    data = pairwise_stats,
+    aes(x = x, xend = xend, y = y, yend = y),
+    inherit.aes = FALSE,
+    linewidth = 0.45
+  ) +
+  geom_segment(
+    data = pairwise_stats,
+    aes(x = x, xend = x, y = y, yend = y_tip),
+    inherit.aes = FALSE,
+    linewidth = 0.45
+  ) +
+  geom_segment(
+    data = pairwise_stats,
+    aes(x = xend, xend = xend, y = y, yend = y_tip),
+    inherit.aes = FALSE,
+    linewidth = 0.45
+  ) +
+  geom_text(
+    data = pairwise_stats,
+    aes(x = (x + xend) / 2, y = y + y_step * 0.12, label = p_adj_label),
+    inherit.aes = FALSE,
+    size = 4.5
+  ) +
+  scale_fill_brewer(palette = "Set2", drop = FALSE) +
+  coord_cartesian(ylim = c(NA, max(pairwise_stats$y) + y_step * 0.45)) +
+  labs(
+    x = "Fibrosis group",
+    y = "SLC7A5 expression (log2 FPKM + 1)",
+    title = "SLC7A5 expression by fibrosis group",
+    subtitle = paste0("Kruskal-Wallis p = ", signif(fib3_kw$p.value, 3))
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+print(p_violin_fib3)
+
+ggsave(
+  file.path(fig_dir, "HYU_SLC7A5_fibrosis_F0_F1_F2F3_violin.png"),
+  p_violin_fib3,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+ggsave(
+  file.path(fig_dir, "HYU_SLC7A5_fibrosis_F0_F1_F2F3_violin.pdf"),
+  p_violin_fib3,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```
+
+# 9. Bar Graph: SLC7A5 by Fibrosis Severity
+
+```{r barplot, fig.width=7, fig.height=5}
+p_bar <- ggplot(summary_df, aes(x = fibrosis_group, y = mean_log2fpkm, fill = fibrosis_group)) +
+  geom_col(width = 0.68, color = "black", linewidth = 0.25) +
+  geom_errorbar(
+    aes(ymin = mean_log2fpkm - sem_log2fpkm, ymax = mean_log2fpkm + sem_log2fpkm),
+    width = 0.18,
+    linewidth = 0.45
+  ) +
+  geom_point(
+    data = plot_df,
+    aes(x = fibrosis_group, y = slc7a5_log2fpkm),
+    inherit.aes = FALSE,
+    position = position_jitter(width = 0.12, height = 0),
+    size = 1.7,
+    alpha = 0.75
+  ) +
+  geom_text(
+    aes(label = paste0("n=", n), y = mean_log2fpkm + sem_log2fpkm + 0.15),
+    size = 3.5
+  ) +
+  scale_fill_brewer(palette = "Set2", drop = FALSE) +
+  labs(
+    x = "Fibrosis severity",
+    y = "SLC7A5 expression (log2 FPKM + 1)",
+    title = "SLC7A5 expression by fibrosis severity"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(p_bar)
+
+ggsave(
+  file.path(fig_dir, "HYU_SLC7A5_fibrosis_barplot_mean_sem.png"),
+  p_bar,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```
+
+# 10. Boxplot Alternative
+
+```{r boxplot, fig.width=7, fig.height=5}
+p_box <- ggplot(plot_df, aes(x = fibrosis_group, y = slc7a5_log2fpkm, fill = fibrosis_group)) +
+  geom_boxplot(width = 0.62, outlier.shape = NA, alpha = 0.75) +
+  geom_jitter(width = 0.12, size = 1.8, alpha = 0.75) +
+  scale_fill_brewer(palette = "Set2", drop = FALSE) +
+  labs(
+    x = "Fibrosis severity",
+    y = "SLC7A5 expression (log2 FPKM + 1)",
+    title = "SLC7A5 expression by fibrosis severity"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(p_box)
+
+ggsave(
+  file.path(fig_dir, "HYU_SLC7A5_fibrosis_boxplot.png"),
+  p_box,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```
+
+# 11. Session Info
+
+```{r session_info}
+sessionInfo()
+```

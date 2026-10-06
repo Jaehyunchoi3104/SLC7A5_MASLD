@@ -1,0 +1,385 @@
+---
+title: "mmLungSpleen_bulkRNA_analysis"
+author: "Jaehyun Choi"
+date: "2026-04-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(DESeq2)
+library(pheatmap)
+library(gplots)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(org.Mm.eg.db)
+library(clusterProfiler)
+```
+
+# Count importing
+```{r}
+setwd("~/bystander_collaboration/bulk_data/count")
+
+samples <- c(
+"sample1_count",
+"sample2_count",
+"sample3_count",
+"sample4_count",
+"sample5_count",
+"sample6_count",
+"sample7_count",
+"sample8_count",
+"sample9_count",
+"sample10_count",
+"sample11_count",
+"sample12_count"
+);
+infiles <- paste(samples, ".out", sep="");
+inlist <- lapply(infiles, read.table);
+alltrans <- unique(unlist(lapply(inlist, "[[", 1), use.names=FALSE));
+
+## construct empty count matrix
+CM <- structure(matrix(as.integer(NA),
+                       nrow=length(alltrans),
+                       ncol=length(samples)),
+                dimnames=list(alltrans, samples))
+
+## fill count matrix
+for (i in 1:length(samples)) {
+  CM[match(inlist[[i]]$V1, rownames(CM)), i] <- inlist[[i]]$V2;
+}
+
+## drop non-unique alignments and other non-gene entries
+dropClasses <- c("__alignment_not_unique", "__no_feature", "__ambiguous",
+                 "__too_low_aQual", "__not_aligned")
+
+if (any(dropClasses %in% rownames(CM)))
+  CM <- CM[-match(dropClasses, rownames(CM)),]
+
+colnames(CM) <- c(
+"mmLung_highPD1_MPCD4T_Rep1",
+"mmLung_lowPD1_MPCD4T_Rep1",
+"mmLung_highPD1_MPCD4T_Rep2",
+"mmLung_lowPD1_MPCD4T_Rep2",
+"mmLung_highPD1_MPCD4T_Rep3",
+"mmLung_lowPD1_MPCD4T_Rep3",
+"mmSpleen_highPD1_MPCD4T_Rep1",
+"mmSpleen_lowPD1_MPCD4T_Rep1",
+"mmSpleen_highPD1_MPCD4T_Rep2",
+"mmSpleen_lowPD1_MPCD4T_Rep2",
+"mmSpleen_highPD1_MPCD4T_Rep3",
+"mmSpleen_lowPD1_MPCD4T_Rep3"
+)
+#write.csv(as.data.frame(CM), file="CM.csv")
+```
+
+## bulk data QC
+
+```{r}
+setwd("~/bystander_collaboration/bulk_data/analysis")
+
+barplot(colSums(CM), col="sienna", las=2, cex.names=0.6, cex.axis=0.6, ylab="library size")
+mtext(side=2, line=4.5, text="Number of transcript-counted reads", font=2)
+
+## Make condition column for the sample information
+cts <- CM
+coldata <- as.data.frame(c("Lung_PD1high","Lung_PD1low","Lung_PD1high","Lung_PD1low","Lung_PD1high","Lung_PD1low","Spleen_PD1high","Spleen_PD1low","Spleen_PD1high","Spleen_PD1low","Spleen_PD1high","Spleen_PD1low"))
+rownames(coldata) <- colnames(cts)
+colnames(coldata) <- "condition"
+
+## To extract normalized read count
+dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata, design = ~ condition)
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+normcount <- counts(dds, normalized=TRUE)
+```
+
+## PCA analysis
+
+```{r}
+## VST transformation (for PCA and clustering)
+vst_all <- vst(dds, blind=TRUE)
+vst_mat <- assay(vst_all)
+
+lung_samples <- c(
+  "mmLung_highPD1_MPCD4T_Rep1",
+  "mmLung_lowPD1_MPCD4T_Rep1",
+  "mmLung_highPD1_MPCD4T_Rep2",
+  "mmLung_lowPD1_MPCD4T_Rep2",
+  "mmLung_highPD1_MPCD4T_Rep3",
+  "mmLung_lowPD1_MPCD4T_Rep3"
+)
+
+spleen_samples <- c(
+  "mmSpleen_highPD1_MPCD4T_Rep1",
+  "mmSpleen_lowPD1_MPCD4T_Rep1",
+  "mmSpleen_highPD1_MPCD4T_Rep2",
+  "mmSpleen_lowPD1_MPCD4T_Rep2",
+  "mmSpleen_highPD1_MPCD4T_Rep3",
+  "mmSpleen_lowPD1_MPCD4T_Rep3"
+)
+
+# 샘플 메타데이터
+sample_meta <- data.frame(
+  sample    = colnames(vst_mat),
+  organ     = ifelse(grepl("^mmLung",   colnames(vst_mat)), "Lung",   "Spleen"),
+  condition = ifelse(grepl("highPD1", colnames(vst_mat)), "PD1-high", "PD1-low"),
+  stringsAsFactors = FALSE
+)
+sample_meta$group <- paste(sample_meta$organ, sample_meta$condition, sep=" ")
+
+# PCA용 helper 함수
+run_pca <- function(mat) {
+  mat_filtered <- mat[apply(mat, 1, sd) > 0, ]
+  prcomp(t(mat_filtered), center=TRUE, scale.=TRUE)
+}
+
+pct_var <- function(pca_res) {
+  eig <- pca_res$sdev^2
+  round(eig / sum(eig) * 100, 1)
+}
+
+pca_all <- run_pca(vst_mat)
+pct_all <- pct_var(pca_all)
+coord_all <- as.data.frame(pca_all$x)
+coord_all$sample    <- rownames(coord_all)
+coord_all <- merge(coord_all, sample_meta, by="sample")
+
+# 색상: organ, 모양: condition
+organ_col <- c("Lung"="steelblue", "Spleen"="tomato")
+cond_pch  <- c("PD1-high"=16, "PD1-low"=1)
+
+p_all <- ggplot(coord_all, aes(x=PC1, y=PC2, color=organ, shape=condition, label=sample)) +
+  geom_point(size=3) +
+  geom_text(vjust=-0.8, size=2.5, show.legend=FALSE) +
+  scale_color_manual(values=organ_col) +
+  scale_shape_manual(values=cond_pch) +
+  labs(title="Combined PCA (VST, Lung + Spleen)",
+       x=paste0("PC1 (", pct_all[1], "%)"),
+       y=paste0("PC2 (", pct_all[2], "%)")) +
+  theme_bw()
+print(p_all)
+```
+
+# PDCD1 expression comparison
+```{r}
+# PDCD1 norm count 추출
+normcount_clean <- normcount
+rownames(normcount_clean) <- sub("\\..*", "", rownames(normcount_clean))
+
+geneX <- "ENSMUSG00000026285"
+geneX_expr <- normcount_clean[geneX, ]
+geneX_expr
+
+plot_df <- data.frame(
+  sample = colnames(normcount_clean),
+  expression = normcount_clean[geneX, ],
+  condition = coldata$condition
+)
+
+plot_df$log2_expr <- log2(plot_df$expression + 1)
+
+ggplot(plot_df, aes(x = condition, y = log2_expr, fill = condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, size = 2) +
+  labs(title = paste(geneX, "expression across conditions"),
+       y = "log2(normalized count + 1)",
+       x = "") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 조건별 평균값 확인
+tapply(plot_df$log2_expr, plot_df$condition, mean)
+```
+
+# DESeq2 adjpvalue
+```{r}
+res_lung <- results(dds, contrast = c("condition", "Lung_PD1high", "Lung_PD1low"))
+idx <- grep("^ENSMUSG00000026285", rownames(res_lung))
+res_lung[idx, ]
+
+res_spleen <- results(dds, contrast = c("condition", "Spleen_PD1high", "Spleen_PD1low"))
+idx <- grep("^ENSMUSG00000026285", rownames(res_spleen))
+res_spleen[idx, ]
+
+library(ggsignif)
+
+# adj p-value 추출
+padj_lung <- res_lung[idx, ]$padj      # Lung 비교
+padj_spleen <- res_spleen[idx, ]$padj  # Spleen 비교
+
+# 별표 변환 함수
+get_stars <- function(p) {
+  if (is.na(p)) return("ns")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  return("ns")
+}
+
+star_lung   <- get_stars(padj_lung)
+star_spleen <- get_stars(padj_spleen)
+
+ggplot(plot_df, aes(x = condition, y = log2_expr, fill = condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, size = 2) +
+  
+  # Lung 비교 (PD1high vs PD1low)
+  geom_signif(
+    comparisons = list(c("Lung_PD1high", "Lung_PD1low")),
+    annotations = star_lung,
+    y_position = max(plot_df$log2_expr) * 1.05,
+    tip_length = 0.01
+  ) +
+  
+  # Spleen 비교
+  geom_signif(
+    comparisons = list(c("Spleen_PD1high", "Spleen_PD1low")),
+    annotations = star_spleen,
+    y_position = max(plot_df$log2_expr) * 1.12,
+    tip_length = 0.01
+  ) +
+  
+  labs(title = "PDCD1 expression across conditions",
+       y = "log2(normalized count + 1)",
+       x = "") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+# PDCD1 expression comparison (t test)
+```{r}
+# Lung: PD1high vs PD1low
+lung_high   <- plot_df$log2_expr[plot_df$condition == "Lung_PD1high"]
+lung_low    <- plot_df$log2_expr[plot_df$condition == "Lung_PD1low"]
+
+# Spleen: PD1high vs PD1low
+spleen_high <- plot_df$log2_expr[plot_df$condition == "Spleen_PD1high"]
+spleen_low  <- plot_df$log2_expr[plot_df$condition == "Spleen_PD1low"]
+
+# t-test 수행
+ttest_lung   <- t.test(lung_high, lung_low)
+ttest_spleen <- t.test(spleen_high, spleen_low)
+
+# p-value 확인
+ttest_lung$p.value
+ttest_spleen$p.value
+
+# adj p-value (두 비교를 동시에 보정)
+p_adjusted <- p.adjust(
+  c(ttest_lung$p.value, ttest_spleen$p.value), 
+  method = "BH"  # Benjamini-Hochberg
+)
+padj_lung_t   <- p_adjusted[1]
+padj_spleen_t <- p_adjusted[2]
+
+# 별표 변환 (기존 함수 재사용)
+star_lung_t   <- get_stars(padj_lung_t)
+star_spleen_t <- get_stars(padj_spleen_t)
+
+ggplot(plot_df, aes(x = condition, y = log2_expr, fill = condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, size = 2) +
+  
+  geom_signif(
+    comparisons = list(c("Lung_PD1high", "Lung_PD1low")),
+    annotations = star_lung_t,
+    y_position = max(plot_df$log2_expr) * 1.05,
+    tip_length = 0.01
+  ) +
+  
+  geom_signif(
+    comparisons = list(c("Spleen_PD1high", "Spleen_PD1low")),
+    annotations = star_spleen_t,
+    y_position = max(plot_df$log2_expr) * 1.12,
+    tip_length = 0.01
+  ) +
+  
+  labs(title = "PDCD1 expression (t-test)",
+       y = "log2(normalized count + 1)",
+       x = "") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## 특정 gene set 확인 Z score heatmap
+```{r}
+# ── 사용자 정의 gene set ─────────────────────────────────────────────────────
+gene_set <- c("Pdcd1", "Bcl6", "Tnfsf8", "Spp1","Batf","Il13","Lgals1","Mki67","Il21","Ebi3","Ifngr1","Il7r","Rorc","Il23r","Il22","S1pr1")  # ← 여기에 원하는 유전자 입력
+# geneset 2
+#gene_set <- c("Ccr1","Ccr2","Ccr3","Ccr5","Ccr6","Ccr7","Ccr8","Ccr9","Cxcr3","Cxcr4","Cxcr5","Cxcr6","Cx3cr1","Xcr1")
+                                                                                                                                            
+ # Gene Symbol → ENSEMBL 변환
+  gs_map <- bitr(gene_set,                                                                                                                  
+                 fromType = "SYMBOL",
+                 toType   = "ENSEMBL",                                                                                                      
+                 OrgDb    = org.Mm.eg.db)
+                                                                                                                                            
+  # normcount에서 추출 (버전 suffix 제거)
+  normcount_gs <- normcount
+  rownames(normcount_gs) <- sub("\\..*", "", rownames(normcount_gs))                                                                        
+   
+  mat_gs <- log2(normcount_gs[rownames(normcount_gs) %in% gs_map$ENSEMBL, 
+                             lung_samples, drop=FALSE] + 1)    
+
+                  
+  # ENSEMBL → Symbol rowname 변환                                                                                                           
+  rownames(mat_gs) <- gs_map$SYMBOL[match(rownames(mat_gs), gs_map$ENSEMBL)]
+  mat_gs <- mat_gs[!duplicated(rownames(mat_gs)), ]                                                                                         
+   
+  # Z-score (유전자 기준, 행)                                                                                                               
+  mat_gs_z <- t(scale(t(mat_gs)))  # genes × samples
+  sum(is.na(mat_gs_z))                                                                                                                                  
+  # ── 전치: samples(행) × genes(열) ────────────────────────────────────────────                                                           
+  mat_plot <- t(mat_gs_z)
+                                                                                                                                            
+  # 행 순서: PD1-low 위, PD1-high 아래                                                                                                      
+  low_rows  <- grep("lowPD1",  rownames(mat_plot), value=TRUE)
+  high_rows <- grep("highPD1", rownames(mat_plot), value=TRUE)                                                                              
+  mat_plot  <- mat_plot[c(low_rows, high_rows), ]                                                                                           
+   
+  # 열 순서: gene_set 입력 순서 유지                                                                                                        
+  col_order <- gene_set[gene_set %in% colnames(mat_plot)]
+  mat_plot  <- mat_plot[, col_order, drop=FALSE]                                                                                            
+                  
+  # ── 색상: blue(-1) → yellow(0) → red(1) ─────────────────────────────────────                                                            
+  my_colors <- colorRampPalette(c("blue", "white", "red"))(200)
+  my_breaks <- seq(-2, 2, length.out=201)                                                                                                
+                                                                                                                                            
+  # ── 행 annotation (PD1 조건 표시) ────────────────────────────────────────────                                                           
+  ann_row <- data.frame(                                                                                                                    
+    Condition = ifelse(grepl("lowPD1",  rownames(mat_plot)), "PD1-low", "PD1-high"),                                                        
+    row.names = rownames(mat_plot)                                                                                                          
+  )
+  ann_colors <- list(Condition = c("PD1-low" = "blue", "PD1-high" = "red"))                                                                 
+                                                                                                                                            
+  # ── Heatmap ───────────────────────────────────────────────────────────────────                                                          
+  pheatmap(mat_plot,                                                                                                                        
+           cluster_rows   = FALSE,                                                                                                          
+           cluster_cols   = FALSE,
+           color          = my_colors,
+           breaks         = my_breaks,
+           annotation_row = ann_row,                                                                                                        
+           annotation_colors = ann_colors,
+           show_rownames  = TRUE,                                                                                                           
+           show_colnames  = TRUE,
+           fontsize_row   = 10,                                                                                                             
+           fontsize_col   = 10,
+           main           = "Gene set Z-score heatmap (Lung)")                                                                              
+                                                                                                                                            
+  pdf("bulkRNA_geneset_zscore_heatmap.pdf", width=5, height=4)
+  pheatmap(mat_plot,                                                                                                                        
+           cluster_rows   = FALSE,
+           cluster_cols   = FALSE,                                                                                                          
+           color          = my_colors,
+           breaks         = my_breaks,                                                                                                      
+           annotation_row = ann_row,
+           annotation_colors = ann_colors,
+           show_rownames  = TRUE,
+           show_colnames  = TRUE,                                                                                                           
+           fontsize_row   = 10,
+           fontsize_col   = 10,                                                                                                             
+           main           = "Gene set Z-score heatmap (Lung)")
+  dev.off()
+```

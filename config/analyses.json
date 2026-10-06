@@ -1,0 +1,216 @@
+{
+  "figure1": {
+    "script": "scripts/scrna/manuscript/Figure1.ipynb",
+    "inputs": [
+      "scrna_monomac_seed"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "scRNA Figure1",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "figure2": {
+    "script": "scripts/scrna/manuscript/Figure2.ipynb",
+    "inputs": [
+      "scrna_mono_seed"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "Monocyte Figure2; donor-level composition permutation Mann-Whitney U + BH",
+    "execution_status": "donor_composition_updated_selective_runtime_validated_not_full_analysis_validated"
+  },
+  "figure3_regulons": {
+    "script": "scripts/scrna/manuscript/Figure3-1.ipynb",
+    "inputs": [
+      "scrna_mono_final",
+      "scenic_adjacencies",
+      "scenic_motifs",
+      "scenic_auc"
+    ],
+    "optional_inputs": [],
+    "upstream": [
+      "figure2"
+    ],
+    "description": "pySCENIC Figure3",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "figure3_cellphone": {
+    "script": "scripts/scrna/manuscript/Figure3-2.ipynb",
+    "inputs": [
+      "scrna_monomac",
+      "scrna_mono_seed",
+      "scrna_raw",
+      "cpdb_database"
+    ],
+    "optional_inputs": [],
+    "upstream": [
+      "figure1"
+    ],
+    "description": "CellPhoneDB Figure3",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "figure3_signaling": {
+    "script": "scripts/scrna/manuscript/Figure3-3.ipynb",
+    "inputs": [
+      "scrna_mono_final"
+    ],
+    "optional_inputs": [],
+    "upstream": [
+      "figure2"
+    ],
+    "description": "경로 score Figure3",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "suppl_figure2": {
+    "script": "scripts/scrna/manuscript/Suppl_Figure2_analysis.ipynb",
+    "inputs": [
+      "scrna_mono_final"
+    ],
+    "optional_inputs": [],
+    "upstream": [
+      "figure2"
+    ],
+    "description": "Supplementary Figure2",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "figure1_nucseq": {
+    "script": "scripts/snrna/manuscript/Figure1_Nucseq.ipynb",
+    "inputs": [
+      "snrna_stage",
+      "snrna_shared",
+      "snrna_gse210077"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "snRNA Figure1",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "nucseq_gsea": {
+    "script": "scripts/snrna/gsea/Nucseq_GSEA_SLC7A5Fig1.ipynb",
+    "inputs": [
+      "snrna_stage"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "snRNA SLC7A5 양성/음성",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "pbmc": {
+    "script": "scripts/pbmc/SLC_pbmc.ipynb",
+    "inputs": [
+      "pbmc_annotated"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "PBMC",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "bulk_full": {
+    "script": "scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2.Rmd",
+    "inputs": [
+      "bulk_counts",
+      "bulk_tpm"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "siSLC7A5 bulk 기본",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "bulk_nosi": {
+    "script": "scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2_nosiCon1.Rmd",
+    "inputs": [
+      "bulk_counts",
+      "bulk_tpm"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "siCon_1 제외 bulk",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "bulk_additional": {
+    "script": "scripts/bulk/knockdown/additional/Liver_siSLC_bulk_DESeq2_additional.Rmd",
+    "inputs": [
+      "bulk_additional_genes",
+      "bulk_additional_transcripts"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "추가 bulk",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "nfkb_shared": {
+    "script": "scripts/bulk/knockdown/Supplementary_Figure_S3_shared_NFKB_targets.Rmd",
+    "inputs": [
+      "bulk_tpm",
+      "bulk_nosi_lps_deg",
+      "bulk_nosi_kd_deg",
+      "scrna_myeloid_deg"
+    ],
+    "optional_inputs": [
+      "scrna_myeloid_gsea"
+    ],
+    "upstream": [
+      "bulk_nosi",
+      "figure1"
+    ],
+    "description": "공통 NF-kB target",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "hyu_validation": {
+    "script": "scripts/bulk/hyu/HYU_independent_bulk_validation.Rmd",
+    "inputs": [
+      "hyu_metadata",
+      "hyu_fpkm",
+      "hyu_candidate_kd",
+      "hyu_candidate_lps"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "HYU 독립 검증",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "hyu_fibrosis": {
+    "script": "scripts/bulk/hyu/HYU_SLC7A5_fibrosis_expression.Rmd",
+    "inputs": [
+      "hyu_metadata",
+      "hyu_fpkm"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "HYU 섬유화",
+    "execution_status": "paths_refactored_not_full_analysis_validated"
+  },
+  "monomac_table": {
+    "script": "scripts/utils/make_suppl_table.py",
+    "inputs": [
+      "monomac_marker_deg"
+    ],
+    "optional_inputs": [],
+    "upstream": [],
+    "description": "단핵구 marker 보조 표",
+    "execution_status": "local_input_smoke_test_passed_not_manuscript_values_compared"
+  },
+  "hwangbj": {
+    "script": "scripts/hwangbj/HwangBJ_analysis.ipynb",
+    "inputs": [
+      "hwangbj_liver_nuclei_counts",
+      "hwangbj_liver_nuclei_metadata",
+      "hwangbj_pbmc_counts",
+      "hwangbj_pbmc_metadata",
+      "hwangbj_reference_mono5",
+      "hwangbj_reference_all",
+      "hwangbj_reference_classical"
+    ],
+    "optional_inputs": [
+      "hwangbj_legacy_masl_myeloid"
+    ],
+    "upstream": [],
+    "description": "HwangBJ liver nuclei MASL1-4 and PBMC MASL/MASH donor Harmony, reference matching and donor inference",
+    "execution_status": "portable_copy_selective_runtime_validated_not_full_rerun",
+    "helpers": [
+      "scripts/hwangbj/HwangBJ_export_counts.R",
+      "scripts/hwangbj/HwangBJ_condition_analysis.py",
+      "scripts/hwangbj/HwangBJ_build_report.py"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.ipynb text
+*.Rmd text
+*.py text
+*.md text
+*.tsv text

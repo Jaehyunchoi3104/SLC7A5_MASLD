@@ -1,0 +1,75 @@
+[
+  {
+    "script": "scripts/scrna/manuscript/Figure1.ipynb",
+    "path_replacements": 29,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/scrna/manuscript/Figure2.ipynb",
+    "path_replacements": 44,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/scrna/manuscript/Figure3-1.ipynb",
+    "path_replacements": 39,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/scrna/manuscript/Figure3-2.ipynb",
+    "path_replacements": 14,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/scrna/manuscript/Figure3-3.ipynb",
+    "path_replacements": 3,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/scrna/manuscript/Suppl_Figure2_analysis.ipynb",
+    "path_replacements": 1,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/snrna/manuscript/Figure1_Nucseq.ipynb",
+    "path_replacements": 20,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/snrna/gsea/Nucseq_GSEA_SLC7A5Fig1.ipynb",
+    "path_replacements": 2,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/pbmc/SLC_pbmc.ipynb",
+    "path_replacements": 3,
+    "change": "portable inputs/outputs; notebook setup; SCENIC export preserves adata"
+  },
+  {
+    "script": "scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2.Rmd",
+    "change": "R shared paths, explicit input IDs, outputs under results, bulk sample validation"
+  },
+  {
+    "script": "scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2_nosiCon1.Rmd",
+    "change": "R shared paths, explicit input IDs, outputs under results, bulk sample validation"
+  },
+  {
+    "script": "scripts/bulk/knockdown/additional/Liver_siSLC_bulk_DESeq2_additional.Rmd",
+    "change": "R shared paths, explicit input IDs, outputs under results, bulk sample validation"
+  },
+  {
+    "script": "scripts/bulk/knockdown/Supplementary_Figure_S3_shared_NFKB_targets.Rmd",
+    "change": "R shared paths, explicit input IDs, outputs under results, bulk sample validation"
+  },
+  {
+    "script": "scripts/bulk/hyu/HYU_independent_bulk_validation.Rmd",
+    "change": "R shared paths, explicit input IDs, outputs under results, bulk sample validation"
+  },
+  {
+    "script": "scripts/bulk/hyu/HYU_SLC7A5_fibrosis_expression.Rmd",
+    "change": "R shared paths, explicit input IDs, outputs under results, bulk sample validation"
+  },
+  {
+    "script": "scripts/utils/make_suppl_table.py",
+    "change": "portable read-only input and isolated output"
+  }
+]
