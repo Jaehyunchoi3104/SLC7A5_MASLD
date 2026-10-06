@@ -96,3 +96,10 @@ The [validation record](docs/validation.md) documents source-format and syntax c
 Before final manuscript release, complete the unresolved accessions and download locations in the [input catalog](config/inputs.json), verify the final analysis environment, and compare the generated figures with the manuscript. The manuscript DOI, code license, and archival code DOI have not yet been specified. Prepare data access instructions according to the [data guide](docs/data_requirements.md).
 
 [All 75 organized scripts](docs/script_index.md) · [Initial source mapping](docs/source_manifest.tsv) · [Updated source snapshots](docs/update_source_manifest.tsv) · [Release hashes](docs/release_manifest.tsv) · [Release notes](docs/release_notes.md)
+
+# Reference 
+Jaehyun Choi, Ji Eun Kim, Seongjun Lee, Eileen Laurel Yoon, Hyo Young Lee, Jai Hoon Yoon, Hyun Sung Kim, Miso Nam, Mi Young Lim, Young-Do Nam, Seung Eun Lee, Dae Won Jun and Hyobin Jeong        
+
+
+
+Cite the code: [![DOI](https://zenodo.org/badge/1406904688.svg)](https://doi.org/10.5281/zenodo.23182625)] (https://doi.org/10.5281/zenodo.23182625)
