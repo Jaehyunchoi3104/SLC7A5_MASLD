@@ -102,4 +102,4 @@ Jaehyun Choi, Ji Eun Kim, Seongjun Lee, Eileen Laurel Yoon, Hyo Young Lee, Jai H
 
 
 
-Cite the code: [![DOI](https://zenodo.org/badge/1406904688.svg)](https://doi.org/10.5281/zenodo.23182625)] (https://doi.org/10.5281/zenodo.23182625)
+Cite the code: [![DOI](https://zenodo.org/badge/1406904688.svg)](https://doi.org/10.5281/zenodo.23182625) (https://doi.org/10.5281/zenodo.23182625)
