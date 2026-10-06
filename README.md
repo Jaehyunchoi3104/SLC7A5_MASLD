@@ -1,23 +1,23 @@
-# SLC7A5-high Monocyte in MASLD — Analysis code
+# SLC7A5-high Monocytes in MASLD — Analysis Code
 
-MASLD의 SLC7A5-high Monocyte 관련 scRNA-seq, snRNA-seq, PBMC, siSLC7A5 knockdown bulk RNA-seq 및 HYU 코호트 분석 코드다. HwangBJ 간 핵/PBMC donor Harmony 및 MASL–MASH 비교도 포함한다.
+Analysis code for SLC7A5-high monocytes in metabolic dysfunction-associated steatotic liver disease (MASLD), covering scRNA-seq, snRNA-seq, PBMC, siSLC7A5 knockdown bulk RNA-seq, and the HYU cohort. The repository also includes separate HwangBJ liver nuclei and PBMC analyses with donor Harmony integration and a donor-level MASL–MASH comparison.
 
-주 분석 **17개**는 입력 경로를 공통 설정으로 분리하고, 새 결과가 이 저장소의 `results/`에 저장되도록 보완했다. 저장소 밖 원본은 수정하지 않았다. 정리된 스크립트 75개는 주 분석 17개, HwangBJ 실행 보조 코드 3개, 보조 참고 12개, 과거 참고 43개다.
+The **17 main analyses** use shared input-path configuration and save new outputs under this repository's `results/` directory. Original source files outside the repository were left unchanged when preparing these copies. The 75 organized scripts comprise 17 main analysis scripts, 3 HwangBJ execution helpers, 12 supporting scripts, and 43 archived scripts.
 
-## 빠른 시작
+## Quick Start
 
-아래 명령은 이 `git/` 폴더를 현재 작업 디렉터리로 사용한다.
+Run the following commands from the repository root, which is the local `git/` directory.
 
-1. [환경 안내](docs/dependencies.md)에 따라 Python 또는 R 환경을 준비한다. Python 설치 후보 파일은 `environment/python.yml`, R 패키지 목록은 `environment/r-packages.tsv`다. 아직 전체 분석으로 검증한 환경 잠금 파일은 아니다.
-2. `config/paths.local.json`에서 데이터 루트와 입력별 위치를 설정한다. 현재 작업 컴퓨터의 기존 데이터 위치는 이 로컬 설정에 연결해 두었으며, 이 파일은 Git에 포함되지 않는다. 다른 컴퓨터에서는 [입력 안내](docs/data_requirements.md)를 따라 새로 만든다.
-3. 실행할 분석의 입력을 점검한다.
+1. Prepare the Python or R environment using the [environment guide](docs/dependencies.md). The candidate Python environment specification is `environment/python.yml`; R packages are listed in `environment/r-packages.tsv`. These files are dependency specifications, not environment lock files validated by a complete analysis run.
+2. Set the data root and input-specific paths in `config/paths.local.json`. This local configuration file is excluded from Git. On a new computer, create it by following the [input-data guide](docs/data_requirements.md).
+3. Check the inputs and environment for the analysis you intend to run.
 
 ```bash
 python tools/check_inputs.py --analysis figure1 --schema
 python tools/check_environment.py
 ```
 
-4. Python 분석은 저장소 안의 노트북을 열어 첫 설정 셀부터 실행한다. R 분석은 다음 도구로 실행하면 HTML과 중간 파일도 `results/`에 저장한다.
+4. Open Python notebooks inside the repository and execute them from the first setup cell. The R execution helper below also saves HTML reports and intermediate files under `results/`.
 
 ```bash
 jupyter lab
@@ -25,66 +25,74 @@ Rscript tools/check_r_packages.R
 Rscript tools/render_rmd.R bulk_nosi
 ```
 
-보조 표 생성은 `python scripts/utils/make_suppl_table.py`로 실행한다. 전체 노트북은 전처리된 AnnData/기존 결과를 시작점으로 사용하며, FASTQ부터 모든 Figure를 자동 생성하는 단일 파이프라인은 아니다. pySCENIC은 아래 실행 순서를 참고한다.
+To generate the supplementary marker table, run `python scripts/utils/make_suppl_table.py`. Most notebooks start from processed AnnData objects or existing analysis outputs; HwangBJ starts from sparse count matrices and metadata supplied as RDS files. This repository is not a single automated pipeline that generates every figure from FASTQ files. See the execution order below for pySCENIC.
 
-## 분석과 실행 순서
+## Analyses and Execution Order
 
-| 분석 ID | 내용 | 시작 코드 |
+| Analysis ID | Description | Entry point |
 | --- | --- | --- |
-| `figure1` | scRNA 구성, SLC7A5 상/하위 20% DEG/GSEA | [Figure1](scripts/scrna/manuscript/Figure1.ipynb) |
-| `figure2` | Classical/SLC7A5-high Monocyte | [Figure2](scripts/scrna/manuscript/Figure2.ipynb) |
-| `figure3_regulons` | TF/regulon/AUC | [Figure3-1](scripts/scrna/manuscript/Figure3-1.ipynb) |
+| `figure1` | scRNA composition and DEG/GSEA for the top and bottom 20% of SLC7A5 expression | [Figure1](scripts/scrna/manuscript/Figure1.ipynb) |
+| `figure2` | Classical and SLC7A5-high monocytes, including donor-level composition comparisons | [Figure2](scripts/scrna/manuscript/Figure2.ipynb) |
+| `figure3_regulons` | Transcription factors, regulons, and AUC | [Figure3-1](scripts/scrna/manuscript/Figure3-1.ipynb) |
 | `figure3_cellphone` | CellPhoneDB | [Figure3-2](scripts/scrna/manuscript/Figure3-2.ipynb) |
-| `figure3_signaling` | TLR4/TNF/NFKB/mTORC1 score | [Figure3-3](scripts/scrna/manuscript/Figure3-3.ipynb) |
-| `suppl_figure2` | 단핵구 표지/염증 유전자 | [Supplementary Figure2](scripts/scrna/manuscript/Suppl_Figure2_analysis.ipynb) |
-| `figure1_nucseq` | snRNA SLC7A5 검증 | [Figure1_Nucseq](scripts/snrna/manuscript/Figure1_Nucseq.ipynb) |
-| `nucseq_gsea` | snRNA SLC7A5 양성/음성 GSEA | [Nucseq_GSEA](scripts/snrna/gsea/Nucseq_GSEA_SLC7A5Fig1.ipynb) |
-| `pbmc` | PBMC 단핵구 | [SLC_pbmc](scripts/pbmc/SLC_pbmc.ipynb) |
-| `hwangbj` | 간 핵 MASL1–4 및 PBMC MASL/MASH donor Harmony·참조 주석·donor 비교 | [HwangBJ_analysis](scripts/hwangbj/HwangBJ_analysis.ipynb) |
-| `bulk_full` | siSLC7A5/LPS 전체 샘플 | [DESeq2](scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2.Rmd) |
-| `bulk_nosi` | siCon_1 제외 | [DESeq2_nosiCon1](scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2_nosiCon1.Rmd) |
-| `bulk_additional` | 추가 bulk 입력 | [DESeq2_additional](scripts/bulk/knockdown/additional/Liver_siSLC_bulk_DESeq2_additional.Rmd) |
-| `nfkb_shared` | scRNA/bulk 공통 NF-kB target | [Supplementary Figure S3](scripts/bulk/knockdown/Supplementary_Figure_S3_shared_NFKB_targets.Rmd) |
-| `hyu_validation` | HYU 독립 코호트 검증 | [HYU_validation](scripts/bulk/hyu/HYU_independent_bulk_validation.Rmd) |
-| `hyu_fibrosis` | HYU 섬유화 연관성 | [HYU_fibrosis](scripts/bulk/hyu/HYU_SLC7A5_fibrosis_expression.Rmd) |
-| `monomac_table` | 단핵구 marker 보조 표 | [make_suppl_table.py](scripts/utils/make_suppl_table.py) |
+| `figure3_signaling` | TLR4/TNF/NFKB/mTORC1 scores | [Figure3-3](scripts/scrna/manuscript/Figure3-3.ipynb) |
+| `suppl_figure2` | Monocyte markers and inflammatory genes | [Supplementary Figure2](scripts/scrna/manuscript/Suppl_Figure2_analysis.ipynb) |
+| `figure1_nucseq` | snRNA validation of SLC7A5 expression | [Figure1_Nucseq](scripts/snrna/manuscript/Figure1_Nucseq.ipynb) |
+| `nucseq_gsea` | GSEA comparing SLC7A5-positive and SLC7A5-negative nuclei | [Nucseq_GSEA](scripts/snrna/gsea/Nucseq_GSEA_SLC7A5Fig1.ipynb) |
+| `pbmc` | PBMC monocyte analysis | [SLC_pbmc](scripts/pbmc/SLC_pbmc.ipynb) |
+| `hwangbj` | Separate liver nuclei MASL1–4 and PBMC MASL/MASH analyses: donor Harmony, reference annotation, and donor-level comparison | [HwangBJ_analysis](scripts/hwangbj/HwangBJ_analysis.ipynb) |
+| `bulk_full` | All siSLC7A5/LPS samples | [DESeq2](scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2.Rmd) |
+| `bulk_nosi` | Bulk analysis excluding siCon_1 | [DESeq2_nosiCon1](scripts/bulk/knockdown/Liver_siSLC_bulk_DESeq2_nosiCon1.Rmd) |
+| `bulk_additional` | Additional bulk expression inputs | [DESeq2_additional](scripts/bulk/knockdown/additional/Liver_siSLC_bulk_DESeq2_additional.Rmd) |
+| `nfkb_shared` | Shared NF-kB targets between scRNA and bulk analyses | [Supplementary Figure S3](scripts/bulk/knockdown/Supplementary_Figure_S3_shared_NFKB_targets.Rmd) |
+| `hyu_validation` | Validation in the independent HYU cohort | [HYU_validation](scripts/bulk/hyu/HYU_independent_bulk_validation.Rmd) |
+| `hyu_fibrosis` | Association between SLC7A5 expression and fibrosis in the HYU cohort | [HYU_fibrosis](scripts/bulk/hyu/HYU_SLC7A5_fibrosis_expression.Rmd) |
+| `monomac_table` | Supplementary monocyte/macrophage marker table | [make_suppl_table.py](scripts/utils/make_suppl_table.py) |
 
-Figure1은 CellPhoneDB 입력과 Myeloid DEG를, Figure2는 후속 Monocyte 분석용 객체를 생성한다. Figure3-1/3-3/Supplementary Figure2는 Figure2 결과를 사용한다. 공통 NF-kB 분석에는 `bulk_nosi`와 Figure1 결과가 필요하다. 이미 생성된 동일 입력 스냅샷이 있으면 선행 분석 없이 해당 파일을 사용할 수 있다. HYU의 후보 유전자 입력은 기존 HYU 검증에 사용한 DEG 파일로 지정했으며 다른 bulk 결과로 자동 대체하지 않는다.
+Figure1 generates CellPhoneDB inputs and myeloid DEG results; Figure2 generates the annotated object used by subsequent monocyte analyses. Figure3-1, Figure3-3, and Supplementary Figure2 use Figure2 outputs. The shared NF-kB analysis requires outputs from `bulk_nosi` and Figure1. Upstream steps may be skipped when the same input snapshots are already available. HYU candidate-gene inputs point to the DEG files used in the original HYU validation and are not automatically replaced by other bulk results.
 
-Figure3-1에서 pySCENIC을 새로 계산할 때는 loom export 셀까지 실행 → `bash scripts/external/pyscenic.sh grn` → `ctx` → `aucell` → 노트북 후속 셀 순서로 실행한다. 기존 adjacency/motif/AUC를 사용할 때는 Docker 단계를 생략할 수 있다. 참조 데이터 4종은 별도로 필요하다.
+To recompute pySCENIC in Figure3-1, run the notebook through the loom-export cell, then run the following commands before continuing with the subsequent notebook cells:
 
-분석별 입력·선행 단계는 [analysis_inputs.md](docs/analysis_inputs.md)와 [analyses.json](config/analyses.json)에 있다.
+```bash
+bash scripts/external/pyscenic.sh grn
+bash scripts/external/pyscenic.sh ctx
+bash scripts/external/pyscenic.sh aucell
+```
 
-**2026-10-06 통계/코호트 갱신:** Figure2 구성 비교는 donor별 exact permutation Mann–Whitney U와 9개 celltype BH 보정을 사용한다. 기존 pooled Fisher/미보정 P값 별표 셀은 donor별 표와 boxplot으로 대체했다. Healthy CD45 library를 donor별로 합치며 MASLD sample ID의 독립 donor 가정은 임상 metadata와 확인해야 한다. DEG 등의 cell-level 탐색 분석을 donor-level로 전부 변경한 것은 아니다.
+Docker computation can be skipped when using existing adjacency, motif, and AUC files. Four external reference files are required for recomputation.
 
-HwangBJ는 간 핵 MASL 4명과 PBMC MASL 4명/MASH 4명을 별도로 처리한다. PBMC reference-matched cluster 주석 후 donor별 비율의 평균 차이를 70개 label permutation과 bootstrap CI로 비교한다. 상세 실행·주석 해석은 [HwangBJ 안내](docs/hwangbj.md)를 참고한다.
+Analysis-specific inputs and upstream dependencies are documented in [analysis_inputs.md](docs/analysis_inputs.md) and [analyses.json](config/analyses.json).
 
-## 저장소 구조
+### Donor-Level Composition and HwangBJ Analyses
+
+**Updated October 6, 2026:** Figure2 composition comparisons use one frequency per donor, with a two-sided exact permutation test of the Mann–Whitney U statistic and Benjamini–Hochberg (BH) correction across nine cell types. The denominator is the total number of myeloid cells retained for each donor. The previous pooled-cell Fisher tests and significance labels based on unadjusted P values were replaced with donor-level statistics and boxplots. Healthy CD45 libraries are merged by donor. MASLD sample IDs are assumed to identify independent donors; this mapping must be checked against clinical metadata. Other exploratory analyses, including cell-level DEG analyses, have not all been converted to donor-level inference.
+
+HwangBJ liver nuclei from four MASL donors and PBMC from four MASL and four MASH donors are processed separately. Following provisional reference-matched cluster annotation, the PBMC analysis compares donor-level high-cluster frequencies among monocytes using an exact permutation test of the mean difference across 70 label allocations and a donor bootstrap confidence interval. See the [HwangBJ guide](docs/hwangbj.md) for execution instructions and interpretation of the annotation.
+
+## Repository Structure
 
 ```text
 git/
-├── scripts/           # 논문 주 분석 17개 + HwangBJ 보조 코드 + 외부 계산 도구
-├── supporting/        # 보조 참고 코드 12개: 경로 보완 대상 아님
-├── archive/           # 과거/참고 코드 43개: 경로 보완 대상 아님
-├── config/            # 입력 목록, 경로 예시, 분석 목록, bulk 그룹 표
-├── slc7a5_paths.py     # Python 입력/출력 경로
-├── R/paths.R          # R 입력/출력 경로
-├── tools/             # 입력·환경·문법 점검, R Markdown 실행
-├── tests/             # 입력 보존·경로·샘플 매핑 검사
-├── environment/       # 의존성 목록과 관측한 버전
-├── docs/              # 원본 매핑, 변경 이력, 검증 범위
-├── data/              # 외부 사용자가 준비하는 입력 위치; Git 제외
-└── results/           # 새 결과/보고서; Git 제외
+├── scripts/           # 17 main analyses, HwangBJ helpers, and external tools
+├── supporting/        # 12 supporting scripts; shared path refactoring not applied
+├── archive/           # 43 historical/reference scripts; path refactoring not applied
+├── config/            # Input catalog, path examples, analyses, and bulk sample groups
+├── slc7a5_paths.py     # Python input/output path helpers
+├── R/paths.R          # R input/output path helpers
+├── tools/             # Input, environment, and syntax checks; R Markdown execution
+├── tests/             # Input preservation, path isolation, and sample-mapping tests
+├── environment/       # Dependency specifications and observed package versions
+├── docs/              # Source mappings, release history, and validation scope
+├── data/              # User-supplied inputs; excluded from Git
+└── results/           # Generated outputs and reports; excluded from Git
 ```
 
-`data/`는 데이터가 제공될 때 사용하며 입력 파일은 저장소에 동봉하지 않았다. `supporting/`와 `archive/`에는 원래 개인 경로가 남아 있으므로 주 분석 실행 안내를 그대로 적용하지 않는다.
+Input datasets are not bundled with the repository. The `data/` directory can be used when preparing external inputs. Scripts in `supporting/` and `archive/` may retain original personal paths and are not covered by the main-analysis execution instructions.
 
-## 검증과 공개 준비 상태
+## Validation and Reproducibility Status
 
-[검증 기록](docs/validation.md): 주 분석 17개 및 HwangBJ 보조 코드 문법/포맷, Python 경로 테스트 10개, R 경로/샘플 매핑, 기존 입력 및 HwangBJ 신규 입력의 존재·일부 스키마, 실제 보조 Excel 표 생성, 최신 원본 79개 해시를 확인했다. 전체 Figure 재계산이나 논문 수치와의 일치는 아직 검증하지 않았다.
+The [validation record](docs/validation.md) documents source-format and syntax checks for the 17 main analyses and HwangBJ helpers, 10 Python path tests, R path isolation and sample mapping, input availability and selected schema checks, supplementary Excel table generation, and hash verification against 79 current original-source snapshots. Selected Figure2 and HwangBJ donor-level statistical outputs were reproduced from saved inputs and matched the original results. A complete rerun of all figures, including the full HwangBJ Harmony analysis, has not been performed for this repository copy.
 
-공개 전에 [입력 목록](config/inputs.json)의 미확정 accession/다운로드 위치를 채우고, 논문 최종 환경과 Figure 결과를 확인해야 한다. 논문 DOI·코드 라이선스·코드 보관 DOI는 현재 제공되지 않아 확정하지 않았다. 데이터 공개 파일과 접근 방법은 [데이터 안내](docs/data_requirements.md)를 기준으로 준비한다.
+Before final manuscript release, complete the unresolved accessions and download locations in the [input catalog](config/inputs.json), verify the final analysis environment, and compare the generated figures with the manuscript. The manuscript DOI, code license, and archival code DOI have not yet been specified. Prepare data access instructions according to the [data guide](docs/data_requirements.md).
 
-[전체 75개 스크립트](docs/script_index.md) · [초기 원본 매핑](docs/source_manifest.tsv) · [최신 원본 기록](docs/update_source_manifest.tsv) · [보완 후 해시](docs/release_manifest.tsv) · [변경 내역](docs/release_notes.md)
-
-이 폴더는 로컬 준비본이다. 원격 저장소 생성이나 GitHub 업로드는 수행하지 않았다.
+[All 75 organized scripts](docs/script_index.md) · [Initial source mapping](docs/source_manifest.tsv) · [Updated source snapshots](docs/update_source_manifest.tsv) · [Release hashes](docs/release_manifest.tsv) · [Release notes](docs/release_notes.md)
